@@ -2,28 +2,26 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta 
-    name="viewport" 
-    content="width=device-width, initial-scale=1.0, user-scalable=no"
-  />
+  <!-- Mobile scaling -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 
-  <title>Minimal AR Step-by-Step</title>
+  <title>Minimal AR Step-by-Step (Fixed)</title>
 
   <!-- Leaflet CSS & JS -->
-  <link 
-    rel="stylesheet" 
-    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" 
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
   />
-  <script 
+  <script
     src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js">
   </script>
 
   <!-- Leaflet Routing Machine CSS & JS -->
-  <link 
-    rel="stylesheet" 
+  <link
+    rel="stylesheet"
     href="https://unpkg.com/leaflet-routing-machine@latest/dist/leaflet-routing-machine.css"
   />
-  <script 
+  <script
     src="https://unpkg.com/leaflet-routing-machine@latest/dist/leaflet-routing-machine.js">
   </script>
 
@@ -33,12 +31,12 @@
 
   <style>
     body {
-      margin: 0; 
+      margin: 0;
       padding: 0;
       font-family: sans-serif;
-      touch-action: none;
-      overflow: hidden;
+      /* Remove or avoid `touch-action: none` so buttons can receive taps */
     }
+
     #map {
       width: 100%;
       height: 100vh;
@@ -46,49 +44,52 @@
       top: 0;
       left: 0;
     }
+
+    /* Make the button clearly on top and interactive */
     #startARBtn {
       position: fixed;
       bottom: 20px;
       left: 50%;
       transform: translateX(-50%);
-      z-index: 999;
+      z-index: 9999; /* high z-index to ensure it's above the map */
       padding: 10px 20px;
       background: #4CAF50;
       color: #fff;
       border: none;
       border-radius: 5px;
       display: none;
+      cursor: pointer;
+      pointer-events: auto; /* ensure taps/clicks are received */
     }
-    #backToMapBtn {
-      position: fixed;
-      top: 20px;
-      left: 20px;
-      z-index: 2000;
-      padding: 10px 20px;
-      background: #f44336;
-      color: #fff;
-      border: none;
-      border-radius: 5px;
-      display: none;
+
+    a-scene {
+      display: none; /* hidden until user clicks "Start AR Guidance" */
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 1000;
     }
   </style>
 </head>
 <body>
+  <!-- Leaflet map -->
   <div id="map"></div>
+
+  <!-- Start AR button -->
   <button id="startARBtn">Start AR Guidance</button>
-  <button id="backToMapBtn">Back to Map</button>
 
   <!-- AR Scene -->
   <a-scene
     embedded
     vr-mode-ui="enabled: false"
-    arjs='sourceType: webcam; debugUIEnabled: false; trackingMethod: best;'
-    renderer='antialias: true; alpha: true'
+    arjs="sourceType: webcam; debugUIEnabled: false; trackingMethod: best;"
   >
     <!-- AR Camera -->
-    <a-entity camera gps-camera="minDistance: 1; maxDistance: 100000" position="0 1.6 0"></a-entity>
+    <a-camera gps-camera rotation-reader look-controls-enabled="false"></a-camera>
 
-    <!-- We'll dynamically add route markers here -->
+    <!-- Container for AR route markers -->
     <a-entity id="routeMarkersContainer"></a-entity>
   </a-scene>
 
@@ -100,124 +101,111 @@
 
     // Initialize map and geolocation
     async function initMap() {
-      try {
-        const position = await getPosition();
-        userLocation = [position.coords.latitude, position.coords.longitude];
+      // Get user position
+      const position = await getPosition();
+      userLocation = [position.coords.latitude, position.coords.longitude];
 
-        map = L.map('map').setView(userLocation, 17);
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+      // Create map
+      map = L.map('map').setView(userLocation, 17);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 
-        userMarker = L.marker(userLocation).addTo(map);
+      // User marker
+      userMarker = L.marker(userLocation).addTo(map);
 
-        navigator.geolocation.watchPosition(pos => {
-          userLocation = [pos.coords.latitude, pos.coords.longitude];
-          if (userMarker) userMarker.setLatLng(userLocation);
-        }, null, {
-          enableHighAccuracy: true,
-          maximumAge: 0,
-          timeout: 5000
-        });
+      // Watch position changes
+      navigator.geolocation.watchPosition(pos => {
+        userLocation = [pos.coords.latitude, pos.coords.longitude];
+        if (userMarker) userMarker.setLatLng(userLocation);
+      });
 
-        map.on('click', onMapClick);
-      } catch (error) {
-        console.error('Error initializing map:', error);
-        alert('Error getting your location. Please ensure location services are enabled.');
-      }
+      // On map click, set route
+      map.on('click', onMapClick);
     }
 
     function onMapClick(e) {
-      if (destinationMarker) {
-        map.removeLayer(destinationMarker);
-      }
-      if (routeControl) {
-        map.removeControl(routeControl);
-      }
+      // Remove old destination and route if exist
+      if (destinationMarker) map.removeLayer(destinationMarker);
+      if (routeControl) map.removeControl(routeControl);
 
+      // New destination
       destinationMarker = L.marker(e.latlng).addTo(map);
 
+      // Build route
       routeControl = L.Routing.control({
         waypoints: [
           L.latLng(userLocation[0], userLocation[1]),
           L.latLng(e.latlng.lat, e.latlng.lng)
         ],
-        createMarker: () => null,
-        showAlternatives: false,
-        fitSelectedRoutes: true
+        createMarker: () => null, // disable default markers
+        showAlternatives: false
       })
       .on('routesfound', onRouteFound)
       .addTo(map);
 
+      // Show "Start AR" button
       document.getElementById('startARBtn').style.display = 'block';
     }
 
     function onRouteFound(e) {
-      routeCoordinates = e.routes[0].coordinates;
-      console.log('Route coordinates found:', routeCoordinates);
+      const route = e.routes[0];
+      routeCoordinates = route.coordinates; // array of {lat, lng}
+      console.log('Route coords:', routeCoordinates);
     }
 
+    // Start AR Guidance
     function startAR() {
-      // Request camera permissions before starting AR
-      navigator.mediaDevices.getUserMedia({ video: true })
-        .then(() => {
-          document.getElementById('map').style.display = 'none';
-          document.getElementById('startARBtn').style.display = 'none';
-          document.getElementById('backToMapBtn').style.display = 'block';
-          document.querySelector('a-scene').style.display = 'block';
+      // Hide map, show AR scene
+      document.getElementById('map').style.display = 'none';
+      document.querySelector('a-scene').style.display = 'block';
 
-          const container = document.getElementById('routeMarkersContainer');
-          while (container.firstChild) {
-            container.removeChild(container.firstChild);
-          }
+      // Clear old AR markers
+      const container = document.getElementById('routeMarkersContainer');
+      while (container.firstChild) {
+        container.removeChild(container.firstChild);
+      }
 
-          routeCoordinates.forEach((coord, index) => {
-            const arMarker = document.createElement('a-entity');
-            arMarker.setAttribute('gps-entity-place', `latitude: ${coord.lat}; longitude: ${coord.lng}`);
-            
-            const shape = document.createElement('a-cylinder');
-            shape.setAttribute('height', '3');
-            shape.setAttribute('radius', '0.5');
-            shape.setAttribute('color', index === routeCoordinates.length - 1 ? '#ff0000' : '#0000ff');
-            shape.setAttribute('material', 'opacity: 0.8');
-            arMarker.appendChild(shape);
+      // Create AR markers for each route coordinate
+      routeCoordinates.forEach((coord, index) => {
+        const arMarker = document.createElement('a-entity');
+        arMarker.setAttribute('gps-entity-place', `latitude: ${coord.lat}; longitude: ${coord.lng}`);
 
-            const text = document.createElement('a-text');
-            text.setAttribute('value', index === routeCoordinates.length - 1 ? 'Destination' : `Waypoint ${index + 1}`);
-            text.setAttribute('scale', '5 5 5');
-            text.setAttribute('align', 'center');
-            text.setAttribute('position', '0 4 0');
-            text.setAttribute('look-at', '[gps-camera]');
-            arMarker.appendChild(text);
+        // Simple 3D shape
+        const shape = document.createElement('a-box');
+        shape.setAttribute('height', '5');
+        shape.setAttribute('width', '5');
+        shape.setAttribute('depth', '5');
+        shape.setAttribute('color', index === routeCoordinates.length - 1 ? 'red' : 'blue');
+        arMarker.appendChild(shape);
 
-            container.appendChild(arMarker);
-          });
-        })
-        .catch(error => {
-          console.error('Error accessing camera:', error);
-          alert('Please allow camera access to use AR navigation');
-        });
-    }
+        // Label
+        const label = document.createElement('a-text');
+        label.setAttribute('value', index === routeCoordinates.length - 1 ? 'Destination' : `Step #${index}`);
+        label.setAttribute('look-at', '[gps-camera]');
+        label.setAttribute('scale', '10 10 10');
+        label.setAttribute('position', '0 6 0');
+        arMarker.appendChild(label);
 
-    function backToMap() {
-      document.querySelector('a-scene').style.display = 'none';
-      document.getElementById('map').style.display = 'block';
-      document.getElementById('startARBtn').style.display = 'block';
-      document.getElementById('backToMapBtn').style.display = 'none';
+        container.appendChild(arMarker);
+      });
     }
 
     function getPosition() {
       return new Promise((resolve, reject) => {
         navigator.geolocation.getCurrentPosition(resolve, reject, {
           enableHighAccuracy: true,
-          timeout: 5000,
+          timeout: 30000,
           maximumAge: 0
         });
       });
     }
 
+    // Attach click listener after the button is parsed
     document.getElementById('startARBtn').addEventListener('click', startAR);
-    document.getElementById('backToMapBtn').addEventListener('click', backToMap);
 
-    window.addEventListener('load', initMap);
+    // Initialize everything on page load
+    window.addEventListener('load', () => {
+      initMap().catch(err => console.error(err));
+    });
   </script>
 </body>
 </html>
