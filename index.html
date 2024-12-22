@@ -36,7 +36,8 @@
       margin: 0; 
       padding: 0;
       font-family: sans-serif;
-      touch-action: none; /* avoid accidental scrolling on mobile */
+      touch-action: none;
+      overflow: hidden;
     }
     #map {
       width: 100%;
@@ -58,29 +59,34 @@
       border-radius: 5px;
       display: none;
     }
-    a-scene {
-      display: none; /* AR view hidden until user clicks Start AR */
-      position: absolute;
-      top: 0;
-      left: 0;
-      width: 100%; 
-      height: 100%;
-      z-index: 1000;
+    #backToMapBtn {
+      position: fixed;
+      top: 20px;
+      left: 20px;
+      z-index: 2000;
+      padding: 10px 20px;
+      background: #f44336;
+      color: #fff;
+      border: none;
+      border-radius: 5px;
+      display: none;
     }
   </style>
 </head>
 <body>
   <div id="map"></div>
   <button id="startARBtn">Start AR Guidance</button>
+  <button id="backToMapBtn">Back to Map</button>
 
   <!-- AR Scene -->
   <a-scene
     embedded
     vr-mode-ui="enabled: false"
-    arjs="sourceType: webcam; debugUIEnabled: false; trackingMethod: best;"
+    arjs='sourceType: webcam; debugUIEnabled: false; trackingMethod: best;'
+    renderer='antialias: true; alpha: true'
   >
     <!-- AR Camera -->
-    <a-camera gps-camera rotation-reader look-controls-enabled="false"></a-camera>
+    <a-entity camera gps-camera="minDistance: 1; maxDistance: 100000" position="0 1.6 0"></a-entity>
 
     <!-- We'll dynamically add route markers here -->
     <a-entity id="routeMarkersContainer"></a-entity>
@@ -90,121 +96,128 @@
     let map, userMarker, routeControl;
     let userLocation = null;
     let destinationMarker = null;
-    let routeCoordinates = []; // Will store the route lat/lng for AR
+    let routeCoordinates = [];
 
     // Initialize map and geolocation
     async function initMap() {
-      // Get user position
-      const position = await getPosition();
-      userLocation = [position.coords.latitude, position.coords.longitude];
+      try {
+        const position = await getPosition();
+        userLocation = [position.coords.latitude, position.coords.longitude];
 
-      // Create Leaflet map
-      map = L.map('map').setView(userLocation, 17);
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+        map = L.map('map').setView(userLocation, 17);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 
-      // User marker
-      userMarker = L.marker(userLocation).addTo(map);
+        userMarker = L.marker(userLocation).addTo(map);
 
-      // Watch position updates
-      navigator.geolocation.watchPosition(pos => {
-        userLocation = [pos.coords.latitude, pos.coords.longitude];
-        if (userMarker) userMarker.setLatLng(userLocation);
-      });
+        navigator.geolocation.watchPosition(pos => {
+          userLocation = [pos.coords.latitude, pos.coords.longitude];
+          if (userMarker) userMarker.setLatLng(userLocation);
+        }, null, {
+          enableHighAccuracy: true,
+          maximumAge: 0,
+          timeout: 5000
+        });
 
-      // On map click, set destination & route
-      map.on('click', onMapClick);
+        map.on('click', onMapClick);
+      } catch (error) {
+        console.error('Error initializing map:', error);
+        alert('Error getting your location. Please ensure location services are enabled.');
+      }
     }
 
-    // Handle map click -> set a new destination & compute route
     function onMapClick(e) {
-      // If already have a destination, remove old marker/control
       if (destinationMarker) {
         map.removeLayer(destinationMarker);
       }
       if (routeControl) {
         map.removeControl(routeControl);
       }
-      // Place new marker
+
       destinationMarker = L.marker(e.latlng).addTo(map);
 
-      // Build route
       routeControl = L.Routing.control({
         waypoints: [
           L.latLng(userLocation[0], userLocation[1]),
           L.latLng(e.latlng.lat, e.latlng.lng)
         ],
-        createMarker: () => null, // disable default markers
-        showAlternatives: false
+        createMarker: () => null,
+        showAlternatives: false,
+        fitSelectedRoutes: true
       })
-      .on('routesfound', onRouteFound) // once route is found, handle it
+      .on('routesfound', onRouteFound)
       .addTo(map);
 
-      // Show "Start AR" button
       document.getElementById('startARBtn').style.display = 'block';
     }
 
-    // When the route is found, extract coordinates for AR markers
     function onRouteFound(e) {
-      const route = e.routes[0];
-      // route.coordinates is an array of {lat, lng} objects
-      routeCoordinates = route.coordinates;
-      console.log('Route coords:', routeCoordinates);
+      routeCoordinates = e.routes[0].coordinates;
+      console.log('Route coordinates found:', routeCoordinates);
     }
 
-    // On "Start AR Guidance"
     function startAR() {
-      // Hide map, show AR scene
-      document.getElementById('map').style.display = 'none';
-      document.querySelector('a-scene').style.display = 'block';
+      // Request camera permissions before starting AR
+      navigator.mediaDevices.getUserMedia({ video: true })
+        .then(() => {
+          document.getElementById('map').style.display = 'none';
+          document.getElementById('startARBtn').style.display = 'none';
+          document.getElementById('backToMapBtn').style.display = 'block';
+          document.querySelector('a-scene').style.display = 'block';
 
-      // Remove any existing markers in the AR container
-      const container = document.getElementById('routeMarkersContainer');
-      while (container.firstChild) {
-        container.removeChild(container.firstChild);
-      }
+          const container = document.getElementById('routeMarkersContainer');
+          while (container.firstChild) {
+            container.removeChild(container.firstChild);
+          }
 
-      // For each coordinate in the route, create an AR marker
-      routeCoordinates.forEach((coord, index) => {
-        const arMarker = document.createElement('a-entity');
-        arMarker.setAttribute('gps-entity-place', `latitude: ${coord.lat}; longitude: ${coord.lng}`);
-        
-        // Example shape (a cylinder) at each point
-        const shape = document.createElement('a-cylinder');
-        shape.setAttribute('height', '5');
-        shape.setAttribute('radius', '1');
-        shape.setAttribute('color', index === routeCoordinates.length - 1 ? 'red' : 'blue');
-        arMarker.appendChild(shape);
+          routeCoordinates.forEach((coord, index) => {
+            const arMarker = document.createElement('a-entity');
+            arMarker.setAttribute('gps-entity-place', `latitude: ${coord.lat}; longitude: ${coord.lng}`);
+            
+            const shape = document.createElement('a-cylinder');
+            shape.setAttribute('height', '3');
+            shape.setAttribute('radius', '0.5');
+            shape.setAttribute('color', index === routeCoordinates.length - 1 ? '#ff0000' : '#0000ff');
+            shape.setAttribute('material', 'opacity: 0.8');
+            arMarker.appendChild(shape);
 
-        // (Optional) Label text
-        const label = document.createElement('a-text');
-        label.setAttribute('value', index === routeCoordinates.length - 1 ? 'Destination' : `Step #${index}`);
-        label.setAttribute('scale', '10 10 10');
-        label.setAttribute('position', '0 3 0');
-        label.setAttribute('look-at', '[gps-camera]');
-        arMarker.appendChild(label);
+            const text = document.createElement('a-text');
+            text.setAttribute('value', index === routeCoordinates.length - 1 ? 'Destination' : `Waypoint ${index + 1}`);
+            text.setAttribute('scale', '5 5 5');
+            text.setAttribute('align', 'center');
+            text.setAttribute('position', '0 4 0');
+            text.setAttribute('look-at', '[gps-camera]');
+            arMarker.appendChild(text);
 
-        container.appendChild(arMarker);
-      });
+            container.appendChild(arMarker);
+          });
+        })
+        .catch(error => {
+          console.error('Error accessing camera:', error);
+          alert('Please allow camera access to use AR navigation');
+        });
     }
 
-    // Helper: get current position as a Promise
+    function backToMap() {
+      document.querySelector('a-scene').style.display = 'none';
+      document.getElementById('map').style.display = 'block';
+      document.getElementById('startARBtn').style.display = 'block';
+      document.getElementById('backToMapBtn').style.display = 'none';
+    }
+
     function getPosition() {
       return new Promise((resolve, reject) => {
         navigator.geolocation.getCurrentPosition(resolve, reject, {
           enableHighAccuracy: true,
-          timeout: 30000,
+          timeout: 5000,
           maximumAge: 0
         });
       });
     }
 
-    // Event listeners
     document.getElementById('startARBtn').addEventListener('click', startAR);
+    document.getElementById('backToMapBtn').addEventListener('click', backToMap);
 
-    // Initialize everything on page load
-    window.addEventListener('load', () => {
-      initMap();
-    });
+    window.addEventListener('load', initMap);
   </script>
 </body>
 </html>
