@@ -2,26 +2,26 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <!-- Mobile scaling -->
+  <!-- Important for mobile scaling -->
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 
-  <title>Minimal AR Step-by-Step (Fixed)</title>
+  <title>AR Step-by-Step with 3D Arrows</title>
 
   <!-- Leaflet CSS & JS -->
-  <link
-    rel="stylesheet"
-    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+  <link 
+    rel="stylesheet" 
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" 
   />
-  <script
+  <script 
     src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js">
   </script>
 
   <!-- Leaflet Routing Machine CSS & JS -->
-  <link
-    rel="stylesheet"
+  <link 
+    rel="stylesheet" 
     href="https://unpkg.com/leaflet-routing-machine@latest/dist/leaflet-routing-machine.css"
   />
-  <script
+  <script 
     src="https://unpkg.com/leaflet-routing-machine@latest/dist/leaflet-routing-machine.js">
   </script>
 
@@ -34,24 +34,27 @@
       margin: 0;
       padding: 0;
       font-family: sans-serif;
-      /* Remove or avoid `touch-action: none` so buttons can receive taps */
+      /* Ensure taps work on mobile */
+      touch-action: pan-y;
     }
 
+    /* Map container */
     #map {
-      width: 100%;
-      height: 100vh;
       position: absolute;
       top: 0;
       left: 0;
+      width: 100%;
+      height: 100vh;
+      z-index: 1;
     }
 
-    /* Make the button clearly on top and interactive */
+    /* Button to start AR */
     #startARBtn {
       position: fixed;
       bottom: 20px;
       left: 50%;
       transform: translateX(-50%);
-      z-index: 9999; /* high z-index to ensure it's above the map */
+      z-index: 9999;
       padding: 10px 20px;
       background: #4CAF50;
       color: #fff;
@@ -59,15 +62,15 @@
       border-radius: 5px;
       display: none;
       cursor: pointer;
-      pointer-events: auto; /* ensure taps/clicks are received */
     }
 
+    /* AR scene hidden by default */
     a-scene {
-      display: none; /* hidden until user clicks "Start AR Guidance" */
+      display: none; 
       position: absolute;
       top: 0;
       left: 0;
-      width: 100%;
+      width: 100%; 
       height: 100%;
       z-index: 1000;
     }
@@ -76,8 +79,7 @@
 <body>
   <!-- Leaflet map -->
   <div id="map"></div>
-
-  <!-- Start AR button -->
+  <!-- Button to start AR -->
   <button id="startARBtn">Start AR Guidance</button>
 
   <!-- AR Scene -->
@@ -87,9 +89,13 @@
     arjs="sourceType: webcam; debugUIEnabled: false; trackingMethod: best;"
   >
     <!-- AR Camera -->
-    <a-camera gps-camera rotation-reader look-controls-enabled="false"></a-camera>
+    <a-camera
+      gps-camera
+      rotation-reader
+      look-controls-enabled="false">
+    </a-camera>
 
-    <!-- Container for AR route markers -->
+    <!-- We will dynamically add route arrows here -->
     <a-entity id="routeMarkersContainer"></a-entity>
   </a-scene>
 
@@ -97,98 +103,129 @@
     let map, userMarker, routeControl;
     let userLocation = null;
     let destinationMarker = null;
-    let routeCoordinates = [];
+    let routeCoords = []; // array of {lat, lng}
+    const startARBtn = document.getElementById('startARBtn');
 
-    // Initialize map and geolocation
+    // 1. Initialize the map & get user location
     async function initMap() {
-      // Get user position
-      const position = await getPosition();
-      userLocation = [position.coords.latitude, position.coords.longitude];
+      // Get initial position
+      const pos = await getPosition();
+      userLocation = [pos.coords.latitude, pos.coords.longitude];
 
-      // Create map
+      // Create Leaflet map
       map = L.map('map').setView(userLocation, 17);
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 
-      // User marker
+      // Show user marker
       userMarker = L.marker(userLocation).addTo(map);
 
-      // Watch position changes
-      navigator.geolocation.watchPosition(pos => {
-        userLocation = [pos.coords.latitude, pos.coords.longitude];
-        if (userMarker) userMarker.setLatLng(userLocation);
-      });
+      // Watch user location changes
+      navigator.geolocation.watchPosition(
+        (pos) => {
+          userLocation = [pos.coords.latitude, pos.coords.longitude];
+          if (userMarker) userMarker.setLatLng(userLocation);
+        },
+        console.error,
+        { enableHighAccuracy: true }
+      );
 
-      // On map click, set route
+      // Click on map to set route
       map.on('click', onMapClick);
     }
 
+    // 2. On map click -> set destination & compute route
     function onMapClick(e) {
-      // Remove old destination and route if exist
       if (destinationMarker) map.removeLayer(destinationMarker);
       if (routeControl) map.removeControl(routeControl);
 
-      // New destination
       destinationMarker = L.marker(e.latlng).addTo(map);
 
-      // Build route
       routeControl = L.Routing.control({
         waypoints: [
           L.latLng(userLocation[0], userLocation[1]),
           L.latLng(e.latlng.lat, e.latlng.lng)
         ],
-        createMarker: () => null, // disable default markers
+        createMarker: () => null, // No default markers
         showAlternatives: false
       })
-      .on('routesfound', onRouteFound)
+      .on('routesfound', (evt) => {
+        // Store route coordinates
+        routeCoords = evt.routes[0].coordinates; 
+        console.log('Route coords:', routeCoords);
+      })
       .addTo(map);
 
-      // Show "Start AR" button
-      document.getElementById('startARBtn').style.display = 'block';
+      // Show the "Start AR Guidance" button
+      startARBtn.style.display = 'block';
     }
 
-    function onRouteFound(e) {
-      const route = e.routes[0];
-      routeCoordinates = route.coordinates; // array of {lat, lng}
-      console.log('Route coords:', routeCoordinates);
-    }
-
-    // Start AR Guidance
+    // 3. Start AR: hide map, show AR scene, place arrows
     function startAR() {
-      // Hide map, show AR scene
       document.getElementById('map').style.display = 'none';
       document.querySelector('a-scene').style.display = 'block';
-
+      
       // Clear old AR markers
       const container = document.getElementById('routeMarkersContainer');
       while (container.firstChild) {
         container.removeChild(container.firstChild);
       }
 
-      // Create AR markers for each route coordinate
-      routeCoordinates.forEach((coord, index) => {
-        const arMarker = document.createElement('a-entity');
-        arMarker.setAttribute('gps-entity-place', `latitude: ${coord.lat}; longitude: ${coord.lng}`);
+      // For each route coordinate (except the last), 
+      // compute a bearing toward the next coordinate and place an arrow
+      for (let i = 0; i < routeCoords.length - 1; i++) {
+        const current = routeCoords[i];
+        const next = routeCoords[i+1];
+        // Bearing from current -> next
+        const bearing = getBearing(current.lat, current.lng, next.lat, next.lng);
 
-        // Simple 3D shape
-        const shape = document.createElement('a-box');
-        shape.setAttribute('height', '5');
-        shape.setAttribute('width', '5');
-        shape.setAttribute('depth', '5');
-        shape.setAttribute('color', index === routeCoordinates.length - 1 ? 'red' : 'blue');
-        arMarker.appendChild(shape);
+        // Create AR entity
+        const arrowEntity = document.createElement('a-entity');
 
-        // Label
+        // Position the arrow in AR
+        arrowEntity.setAttribute('gps-entity-place', `latitude: ${current.lat}; longitude: ${current.lng}`);
+
+        // Rotate it so it points toward "next" step
+        // By default, -Z direction is "forward" in A-Frame, so we rotate around Y by the bearing.
+        arrowEntity.setAttribute('rotation', `0 ${bearing} 0`);
+
+        // Add a 3D arrow (a cone on top of a cylinder, or any shape you like)
+        // We'll tilt the cone so it points "forward" along -Z
+        const arrow = document.createElement('a-entity');
+        arrow.setAttribute('geometry', 'primitive: cone; height: 2; radiusBottom: 0.5');
+        arrow.setAttribute('material', 'color: #3498db');
+        arrow.setAttribute('position', '0 2 0'); // raise it above the ground
+        arrow.setAttribute('rotation', '-90 0 0'); 
+        arrowEntity.appendChild(arrow);
+
+        // (Optional) Add text label
         const label = document.createElement('a-text');
-        label.setAttribute('value', index === routeCoordinates.length - 1 ? 'Destination' : `Step #${index}`);
-        label.setAttribute('look-at', '[gps-camera]');
+        label.setAttribute('value', `Step ${i+1}`);
+        label.setAttribute('align', 'center');
         label.setAttribute('scale', '10 10 10');
-        label.setAttribute('position', '0 6 0');
-        arMarker.appendChild(label);
+        label.setAttribute('position', '0 5 0'); 
+        // Make the text always face the camera:
+        label.setAttribute('look-at', '[gps-camera]');
+        arrowEntity.appendChild(label);
 
-        container.appendChild(arMarker);
-      });
+        container.appendChild(arrowEntity);
+      }
     }
 
+    // 4. Bearing helper: returns heading from lat1/lng1 to lat2/lng2 in [0..360)
+    function getBearing(lat1, lon1, lat2, lon2) {
+      const rad = Math.PI / 180;
+      const φ1 = lat1 * rad;
+      const φ2 = lat2 * rad;
+      const Δλ = (lon2 - lon1) * rad;
+
+      const y = Math.sin(Δλ) * Math.cos(φ2);
+      const x = Math.cos(φ1)*Math.sin(φ2) - Math.sin(φ1)*Math.cos(φ2)*Math.cos(Δλ);
+      let brng = Math.atan2(y, x);
+      brng = brng * (180 / Math.PI);
+      return (brng + 360) % 360; 
+    }
+
+    // 5. Get user location as a Promise
     function getPosition() {
       return new Promise((resolve, reject) => {
         navigator.geolocation.getCurrentPosition(resolve, reject, {
@@ -199,10 +236,10 @@
       });
     }
 
-    // Attach click listener after the button is parsed
-    document.getElementById('startARBtn').addEventListener('click', startAR);
+    // Attach Start AR handler
+    startARBtn.addEventListener('click', startAR);
 
-    // Initialize everything on page load
+    // Initialize on load
     window.addEventListener('load', () => {
       initMap().catch(err => console.error(err));
     });
