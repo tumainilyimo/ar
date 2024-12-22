@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+
+  <!-- Ensure the page scales correctly on mobile -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, 
+                                 user-scalable=no, 
+                                 minimum-scale=1.0, 
+                                 maximum-scale=1.0">
+
+  <title>AR Navigation Map</title>
+
+  <!-- Leaflet CSS and JS -->
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css"
+  />
+  <script
+    src="https://unpkg.com/leaflet@1.9.3/dist/leaflet.js"
+  ></script>
+
+  <!-- A-Frame and AR.js -->
+  <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
+  <!-- Use the latest AR.js from raw.githack to ensure HTTPS -->
+  <script src="https://raw.githack.com/jeromeetienne/AR.js/master/aframe/build/aframe-ar.js"></script>
+
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      font-family: Arial, sans-serif;
+    }
+    #map {
+      width: 100%;
+      height: 100vh;
+      position: absolute;
+      top: 0;
+      left: 0;
+      z-index: 1;
+    }
+    .ar-scene {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 2;
+      display: none; /* Hide the AR scene until "Start AR" is clicked */
+    }
+    #startARButton {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 3;
+      padding: 10px 20px;
+      background-color: #4CAF50;
+      color: white;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 1rem;
+    }
+    #instructions {
+      position: fixed;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 3;
+      background-color: rgba(255, 255, 255, 0.9);
+      padding: 10px;
+      border-radius: 5px;
+      text-align: center;
+      max-width: 80%;
+    }
+  </style>
+</head>
+<body>
+  <div id="instructions">
+    Click to set the start point, then click again to set the destination.
+  </div>
+  <div id="map"></div>
+  <button id="startARButton" style="display: none;">Start AR Navigation</button>
+
+  <!-- A-Frame Scene -->
+  <a-scene
+    embedded
+    class="ar-scene"
+    vr-mode-ui="enabled: false"
+    device-orientation-permission-ui="enabled: true"
+    arjs="sourceType: webcam; debugUIEnabled: false;">
+    
+    <a-camera gps-camera rotation-reader></a-camera>
+
+    <!-- Entities to mark Start/End points -->
+    <a-entity id="startPoint"></a-entity>
+    <a-entity id="endPoint"></a-entity>
+
+    <!-- Entity to draw a line or path between them -->
+    <a-entity id="pathLine"></a-entity>
+  </a-scene>
+
+  <script>
+    let startPoint = null;
+    let endPoint = null;
+    let markers = [];
+
+    // Initialize the Leaflet map
+    const map = L.map('map').setView([51.505, -0.09], 13);
+
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© OpenStreetMap contributors'
+    }).addTo(map);
+
+    // Handle map clicks to set start and end points
+    map.on('click', function(e) {
+      if (!startPoint) {
+        startPoint = e.latlng;
+        markers.push(
+          L.marker(startPoint)
+            .addTo(map)
+            .bindPopup('Start Point')
+            .openPopup()
+        );
+        document.getElementById('instructions').textContent =
+          'Now click to set the destination point';
+      } else if (!endPoint) {
+        endPoint = e.latlng;
+        markers.push(
+          L.marker(endPoint)
+            .addTo(map)
+            .bindPopup('End Point')
+            .openPopup()
+        );
+        document.getElementById('startARButton').style.display = 'block';
+        document.getElementById('instructions').textContent =
+          'Points set! Click "Start AR Navigation" to begin';
+      }
+    });
+
+    // Start AR navigation
+    document.getElementById('startARButton').addEventListener('click', function() {
+      if (!startPoint || !endPoint) return;
+
+      // Hide the map and show the AR scene
+      document.getElementById('map').style.display = 'none';
+      document.querySelector('.ar-scene').style.display = 'block';
+      this.style.display = 'none';
+
+      initAR();
+    });
+
+    function initAR() {
+      if (!startPoint || !endPoint) return;
+
+      // Create AR markers
+      const startEntity = document.getElementById('startPoint');
+      const endEntity = document.getElementById('endPoint');
+
+      // GPS location for the start point
+      startEntity.setAttribute(
+        'gps-entity-place',
+        `latitude: ${startPoint.lat}; longitude: ${startPoint.lng}`
+      );
+      // GPS location for the end point
+      endEntity.setAttribute(
+        'gps-entity-place',
+        `latitude: ${endPoint.lat}; longitude: ${endPoint.lng}`
+      );
+
+      // Add visible spheres (or any 3D object you prefer) for each
+      const startMarker = document.createElement('a-sphere');
+      startMarker.setAttribute('color', 'red');
+      startMarker.setAttribute('radius', '0.5');
+      startEntity.appendChild(startMarker);
+
+      const endMarker = document.createElement('a-sphere');
+      endMarker.setAttribute('color', 'green');
+      endMarker.setAttribute('radius', '0.5');
+      endEntity.appendChild(endMarker);
+
+      // Draw a line in 3D space (Note: direct lat/lng to x/z is simplistic)
+      const pathLine = document.getElementById('pathLine');
+      pathLine.setAttribute('line', {
+        start: { x: startPoint.lng, y: 1.6, z: startPoint.lat },
+        end: { x: endPoint.lng, y: 1.6, z: endPoint.lat },
+        color: 'blue'
+      });
+    }
+
+    // Reset functionality (optional helper)
+    function resetPoints() {
+      startPoint = null;
+      endPoint = null;
+      markers.forEach(marker => map.removeLayer(marker));
+      markers = [];
+      document.getElementById('instructions').textContent =
+        'Click to set the start point';
+      document.getElementById('startARButton').style.display = 'none';
+
+      // Reset AR scene if needed
+      document.getElementById('map').style.display = 'block';
+      document.querySelector('.ar-scene').style.display = 'none';
+    }
+  </script>
+</body>
+</html>
