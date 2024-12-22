@@ -2,27 +2,15 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-
-  <!-- Ensure the page scales correctly on mobile -->
   <meta name="viewport" content="width=device-width, initial-scale=1.0, 
                                  user-scalable=no, 
                                  minimum-scale=1.0, 
                                  maximum-scale=1.0">
+  <title>Tanzania AR Navigation</title>
 
-  <title>AR Navigation Map</title>
-
-  <!-- Leaflet CSS and JS -->
-  <link
-    rel="stylesheet"
-    href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css"
-  />
-  <script
-    src="https://unpkg.com/leaflet@1.9.3/dist/leaflet.js"
-  ></script>
-
-  <!-- A-Frame and AR.js -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css"/>
+  <script src="https://unpkg.com/leaflet@1.9.3/dist/leaflet.js"></script>
   <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
-  <!-- Use the latest AR.js from raw.githack to ensure HTTPS -->
   <script src="https://raw.githack.com/jeromeetienne/AR.js/master/aframe/build/aframe-ar.js"></script>
 
   <style>
@@ -35,8 +23,6 @@
       width: 100%;
       height: 100vh;
       position: absolute;
-      top: 0;
-      left: 0;
       z-index: 1;
     }
     .ar-scene {
@@ -46,7 +32,7 @@
       width: 100%;
       height: 100%;
       z-index: 2;
-      display: none; /* Hide the AR scene until "Start AR" is clicked */
+      display: none;
     }
     #startARButton {
       position: fixed;
@@ -60,7 +46,6 @@
       border: none;
       border-radius: 5px;
       cursor: pointer;
-      font-size: 1rem;
     }
     #instructions {
       position: fixed;
@@ -72,136 +57,204 @@
       padding: 10px;
       border-radius: 5px;
       text-align: center;
-      max-width: 80%;
+    }
+    #distance {
+      position: fixed;
+      bottom: 80px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 3;
+      background-color: rgba(255, 255, 255, 0.9);
+      padding: 10px;
+      border-radius: 5px;
     }
   </style>
 </head>
 <body>
-  <div id="instructions">
-    Click to set the start point, then click again to set the destination.
-  </div>
+  <div id="instructions">Loading your current location...</div>
   <div id="map"></div>
+  <div id="distance" style="display: none;"></div>
   <button id="startARButton" style="display: none;">Start AR Navigation</button>
 
-  <!-- A-Frame Scene -->
-  <a-scene
-    embedded
-    class="ar-scene"
-    vr-mode-ui="enabled: false"
-    device-orientation-permission-ui="enabled: true"
-    arjs="sourceType: webcam; debugUIEnabled: false;">
-    
+  <a-scene embedded class="ar-scene" vr-mode-ui="enabled: false" arjs="sourceType: webcam; debugUIEnabled: false;">
     <a-camera gps-camera rotation-reader></a-camera>
-
-    <!-- Entities to mark Start/End points -->
     <a-entity id="startPoint"></a-entity>
     <a-entity id="endPoint"></a-entity>
-
-    <!-- Entity to draw a line or path between them -->
-    <a-entity id="pathLine"></a-entity>
+    <a-entity id="directionArrow"></a-entity>
   </a-scene>
 
   <script>
     let startPoint = null;
     let endPoint = null;
     let markers = [];
+    let userMarker = null;
+    let map;
 
-    // Initialize the Leaflet map
-    const map = L.map('map').setView([51.505, -0.09], 13);
+    // Initialize with geolocation
+    navigator.geolocation.getCurrentPosition(
+      function(position) {
+        const userLat = position.coords.latitude;
+        const userLng = position.coords.longitude;
+        
+        // Initialize map centered on user's location (Tanzania)
+        map = L.map('map').setView([userLat, userLng], 15);
+        
+        L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          attribution: '© OpenStreetMap contributors'
+        }).addTo(map);
 
-    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '© OpenStreetMap contributors'
-    }).addTo(map);
+        // Add user's location marker
+        userMarker = L.marker([userLat, userLng], {
+          icon: L.divIcon({
+            className: 'user-marker',
+            html: '📍',
+            iconSize: [25, 25]
+          })
+        }).addTo(map);
 
-    // Handle map clicks to set start and end points
+        // Update instructions
+        document.getElementById('instructions').textContent = 
+          'Click to set destination point';
+
+        // Set start point as current location
+        startPoint = L.latLng(userLat, userLng);
+        
+        // Update user location periodically
+        setInterval(() => updateUserLocation(), 5000);
+      },
+      function(error) {
+        alert('Error getting location: ' + error.message);
+      },
+      {
+        enableHighAccuracy: true
+      }
+    );
+
+    function updateUserLocation() {
+      navigator.geolocation.getCurrentPosition(
+        function(position) {
+          const newLat = position.coords.latitude;
+          const newLng = position.coords.longitude;
+          
+          if (userMarker) {
+            userMarker.setLatLng([newLat, newLng]);
+          }
+          
+          // Update distance display if in AR mode
+          if (endPoint && document.querySelector('.ar-scene').style.display !== 'none') {
+            const distance = calculateDistance(newLat, newLng, endPoint.lat, endPoint.lng);
+            document.getElementById('distance').textContent = 
+              `Distance to destination: ${distance.toFixed(1)} meters`;
+          }
+        }
+      );
+    }
+
+    // Handle map clicks for destination point
     map.on('click', function(e) {
-      if (!startPoint) {
-        startPoint = e.latlng;
-        markers.push(
-          L.marker(startPoint)
-            .addTo(map)
-            .bindPopup('Start Point')
-            .openPopup()
-        );
-        document.getElementById('instructions').textContent =
-          'Now click to set the destination point';
-      } else if (!endPoint) {
+      if (!endPoint) {
         endPoint = e.latlng;
+        if (markers.length > 0) {
+          map.removeLayer(markers[0]);
+          markers = [];
+        }
         markers.push(
           L.marker(endPoint)
             .addTo(map)
-            .bindPopup('End Point')
+            .bindPopup('Destination')
             .openPopup()
         );
         document.getElementById('startARButton').style.display = 'block';
-        document.getElementById('instructions').textContent =
-          'Points set! Click "Start AR Navigation" to begin';
+        document.getElementById('instructions').textContent = 
+          'Destination set! Click "Start AR Navigation" to begin';
       }
     });
 
-    // Start AR navigation
     document.getElementById('startARButton').addEventListener('click', function() {
-      if (!startPoint || !endPoint) return;
-
-      // Hide the map and show the AR scene
       document.getElementById('map').style.display = 'none';
       document.querySelector('.ar-scene').style.display = 'block';
+      document.getElementById('distance').style.display = 'block';
       this.style.display = 'none';
-
       initAR();
     });
+
+    function calculateDistance(lat1, lon1, lat2, lon2) {
+      const R = 6371e3; // Earth's radius in meters
+      const φ1 = lat1 * Math.PI/180;
+      const φ2 = lat2 * Math.PI/180;
+      const Δφ = (lat2-lat1) * Math.PI/180;
+      const Δλ = (lon2-lon1) * Math.PI/180;
+
+      const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
+                Math.cos(φ1) * Math.cos(φ2) *
+                Math.sin(Δλ/2) * Math.sin(Δλ/2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+
+      return R * c;
+    }
+
+    function calculateBearing(lat1, lon1, lat2, lon2) {
+      const φ1 = lat1 * Math.PI/180;
+      const φ2 = lat2 * Math.PI/180;
+      const Δλ = (lon2-lon1) * Math.PI/180;
+
+      const y = Math.sin(Δλ) * Math.cos(φ2);
+      const x = Math.cos(φ1)*Math.sin(φ2) -
+                Math.sin(φ1)*Math.cos(φ2)*Math.cos(Δλ);
+      const θ = Math.atan2(y, x);
+      
+      return (θ*180/Math.PI + 360) % 360;
+    }
 
     function initAR() {
       if (!startPoint || !endPoint) return;
 
-      // Create AR markers
-      const startEntity = document.getElementById('startPoint');
       const endEntity = document.getElementById('endPoint');
+      endEntity.setAttribute('gps-entity-place', 
+        `latitude: ${endPoint.lat}; longitude: ${endPoint.lng}`);
 
-      // GPS location for the start point
-      startEntity.setAttribute(
-        'gps-entity-place',
-        `latitude: ${startPoint.lat}; longitude: ${startPoint.lng}`
-      );
-      // GPS location for the end point
-      endEntity.setAttribute(
-        'gps-entity-place',
-        `latitude: ${endPoint.lat}; longitude: ${endPoint.lng}`
-      );
-
-      // Add visible spheres (or any 3D object you prefer) for each
-      const startMarker = document.createElement('a-sphere');
-      startMarker.setAttribute('color', 'red');
-      startMarker.setAttribute('radius', '0.5');
-      startEntity.appendChild(startMarker);
-
+      // Create destination marker
       const endMarker = document.createElement('a-sphere');
       endMarker.setAttribute('color', 'green');
       endMarker.setAttribute('radius', '0.5');
       endEntity.appendChild(endMarker);
 
-      // Draw a line in 3D space (Note: direct lat/lng to x/z is simplistic)
-      const pathLine = document.getElementById('pathLine');
-      pathLine.setAttribute('line', {
-        start: { x: startPoint.lng, y: 1.6, z: startPoint.lat },
-        end: { x: endPoint.lng, y: 1.6, z: endPoint.lat },
-        color: 'blue'
+      // Create direction arrow
+      const arrow = document.createElement('a-entity');
+      arrow.setAttribute('geometry', {
+        primitive: 'cone',
+        height: 2,
+        radiusBottom: 0.5,
+        radiusTop: 0
       });
+      arrow.setAttribute('material', 'color: yellow');
+      arrow.setAttribute('position', '0 2 -2');
+      document.querySelector('a-camera').appendChild(arrow);
+
+      // Update arrow direction periodically
+      setInterval(() => {
+        navigator.geolocation.getCurrentPosition((position) => {
+          const bearing = calculateBearing(
+            position.coords.latitude,
+            position.coords.longitude,
+            endPoint.lat,
+            endPoint.lng
+          );
+          arrow.setAttribute('rotation', `0 ${bearing} 0`);
+        });
+      }, 1000);
     }
 
-    // Reset functionality (optional helper)
     function resetPoints() {
-      startPoint = null;
       endPoint = null;
       markers.forEach(marker => map.removeLayer(marker));
       markers = [];
-      document.getElementById('instructions').textContent =
-        'Click to set the start point';
+      document.getElementById('instructions').textContent = 
+        'Click to set destination point';
       document.getElementById('startARButton').style.display = 'none';
-
-      // Reset AR scene if needed
       document.getElementById('map').style.display = 'block';
       document.querySelector('.ar-scene').style.display = 'none';
+      document.getElementById('distance').style.display = 'none';
     }
   </script>
 </body>
