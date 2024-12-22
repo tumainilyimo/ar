@@ -39,6 +39,10 @@
             height: 100%;
             z-index: 2;
             pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
         }
 
         .button {
@@ -51,6 +55,7 @@
             cursor: pointer;
             font-size: 16px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            margin-bottom: 10px;
         }
 
         .button:active {
@@ -58,10 +63,6 @@
         }
 
         #status-bar {
-            position: fixed;
-            top: 20px;
-            left: 50%;
-            transform: translateX(-50%);
             background-color: rgba(255, 255, 255, 0.9);
             padding: 10px 20px;
             border-radius: 20px;
@@ -69,42 +70,29 @@
             text-align: center;
             z-index: 1000;
             pointer-events: auto;
+            margin-bottom: 10px;
         }
 
-        #start-ar {
-            position: fixed;
-            bottom: 30px;
-            left: 50%;
-            transform: translateX(-50%);
+        #start-ar, #start-manual-ar {
             display: none;
         }
 
         #back-button {
-            position: fixed;
-            top: 20px;
-            left: 20px;
             display: none;
             z-index: 1000;
         }
 
         #retry-button {
-            position: fixed;
-            top: 80px;
-            left: 50%;
-            transform: translateX(-50%);
             display: none;
         }
 
         #distance-display {
-            position: fixed;
-            bottom: 90px;
-            left: 50%;
-            transform: translateX(-50%);
             background-color: rgba(255, 255, 255, 0.9);
             padding: 10px 20px;
             border-radius: 20px;
             display: none;
             z-index: 1000;
+            margin-top: 10px;
         }
 
         .ar-only {
@@ -137,6 +125,24 @@
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
+
+        .input-group {
+            display: flex;
+            flex-direction: column;
+            margin-bottom: 10px;
+        }
+
+        .input-group label {
+            margin-bottom: 5px;
+            color: #333;
+        }
+
+        .input-group input {
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-size: 16px;
+        }
     </style>
 </head>
 <body>
@@ -150,8 +156,28 @@
 
     <!-- UI Elements -->
     <div id="ui-overlay">
-        <div id="status-bar">Initializing...</div>
-        <button id="start-ar" class="button">Start AR Navigation</button>
+        <div id="status-bar">Initializing GPS...</div>
+        <button id="start-ar" class="button">Start AR Navigation to Clicked Point</button>
+
+        <div class="input-group">
+            <label for="dest1-lat">Destination 1 Latitude:</label>
+            <input type="number" id="dest1-lat" placeholder="Latitude">
+        </div>
+        <div class="input-group">
+            <label for="dest1-lng">Destination 1 Longitude:</label>
+            <input type="number" id="dest1-lng" placeholder="Longitude">
+        </div>
+
+        <div class="input-group">
+            <label for="dest2-lat">Destination 2 Latitude:</label>
+            <input type="number" id="dest2-lat" placeholder="Latitude">
+        </div>
+        <div class="input-group">
+            <label for="dest2-lng">Destination 2 Longitude:</label>
+            <input type="number" id="dest2-lng" placeholder="Longitude">
+        </div>
+
+        <button id="start-manual-ar" class="button">Start AR Navigation to Manual Points</button>
         <button id="back-button" class="button">Back to Map</button>
         <button id="retry-button" class="button">Retry GPS</button>
         <div id="distance-display"></div>
@@ -170,14 +196,15 @@
     </a-scene>
 
     <script>
-        // IMPORTANT: This code relies on HTTPS for the Geolocation API to work correctly on most browsers.
-        // If your site is served over HTTP, location services might be blocked.
-
         // Global variables
-        let map, userMarker, destinationMarker;
+        let map, userMarker;
         let watchId = null;
         let currentPosition = null;
         let arMode = false;
+        let destinationMarker = null; // For map click destination
+        let manualDestinations = [];
+        let currentManualDestinationIndex = 0;
+        const ARRIVAL_THRESHOLD = 20; // meters
 
         // Utility functions
         function showElement(id) {
@@ -230,7 +257,8 @@
                 initializeMap(position);
                 startLocationTracking();
 
-                setStatus('Click on the map to set destination');
+                setStatus('Click on the map to set a single destination, or enter two destinations below.');
+                showElement('start-manual-ar');
             } catch (error) {
                 handleLocationError(error);
             }
@@ -270,6 +298,7 @@
 
             // Handle map clicks
             map.on('click', handleMapClick);
+            showElement('start-ar'); // Show button for map click destination
         }
 
         // Start tracking location
@@ -296,7 +325,7 @@
                 userMarker.setLatLng([latitude, longitude]);
             }
 
-            if (arMode && destinationMarker) {
+            if (arMode) {
                 updateARElements(position);
             }
         }
@@ -306,24 +335,42 @@
             if (destinationMarker) {
                 map.removeLayer(destinationMarker);
             }
-
             destinationMarker = L.marker(e.latlng).addTo(map);
             showElement('start-ar');
-            setStatus('Destination set! Click "Start AR Navigation" to begin');
+            setStatus('Destination set! Click "Start AR Navigation to Clicked Point" to begin.');
+        }
+
+        // Initialize AR with manual destinations
+        function initializeARWithManualDestinations() {
+            const dest1Lat = parseFloat(document.getElementById('dest1-lat').value);
+            const dest1Lng = parseFloat(document.getElementById('dest1-lng').value);
+            const dest2Lat = parseFloat(document.getElementById('dest2-lat').value);
+            const dest2Lng = parseFloat(document.getElementById('dest2-lng').value);
+
+            if (isNaN(dest1Lat) || isNaN(dest1Lng) || isNaN(dest2Lat) || isNaN(dest2Lng)) {
+                setStatus('Please enter valid latitude and longitude for both destinations.');
+                return;
+            }
+
+            manualDestinations = [
+                L.latLng(dest1Lat, dest1Lng),
+                L.latLng(dest2Lat, dest2Lng)
+            ];
+            currentManualDestinationIndex = 0;
+            startARNavigation();
         }
 
         // Initialize AR
-        function initializeAR() {
-            if (!currentPosition || !destinationMarker) return;
+        function initializeAR(destination) {
+            if (!currentPosition || !destination) return;
 
             const scene = document.querySelector('a-scene');
             scene.style.display = 'block';
 
             const destEntity = document.getElementById('destination-marker');
-            const destPosition = destinationMarker.getLatLng();
 
             // Create destination marker in AR
-            destEntity.setAttribute('gps-entity-place', `latitude: ${destPosition.lat}; longitude: ${destPosition.lng}`);
+            destEntity.setAttribute('gps-entity-place', `latitude: ${destination.lat}; longitude: ${destination.lng}`);
 
             // Add 3D model or primitive shape
             const model = document.createElement('a-box');
@@ -333,6 +380,7 @@
 
             // Add text label
             const text = document.createElement('a-text');
+            text.setAttribute('id', 'destination-label');
             text.setAttribute('value', 'DESTINATION');
             text.setAttribute('look-at', '[gps-camera]');
             text.setAttribute('scale', '100 100 100');
@@ -342,19 +390,56 @@
             arMode = true;
         }
 
+        function startARNavigation() {
+            hideElement('map');
+            hideElement('start-ar');
+            hideElement('start-manual-ar');
+            showElement('back-button');
+            showElement('distance-display');
+            currentManualDestinationIndex = 0;
+            updateARDestination();
+            arMode = true;
+            setStatus(`Navigating to Destination ${currentManualDestinationIndex + 1}`);
+        }
+
+        function updateARDestination() {
+            if (manualDestinations.length === 0) return;
+
+            const currentTarget = manualDestinations[currentManualDestinationIndex];
+            const destEntity = document.getElementById('destination-marker');
+            destEntity.setAttribute('gps-entity-place', `latitude: ${currentTarget.lat}; longitude: ${currentTarget.lng}`);
+            document.getElementById('destination-label').setAttribute('value', `DESTINATION ${currentManualDestinationIndex + 1}`);
+        }
+
         // Update AR elements (like distance display)
         function updateARElements(position) {
-            if (!destinationMarker) return;
+            if (!arMode) return;
 
-            const destLatLng = destinationMarker.getLatLng();
+            let targetDestination;
+            if (manualDestinations.length > 0) {
+                targetDestination = manualDestinations[currentManualDestinationIndex];
+            } else if (destinationMarker) {
+                targetDestination = destinationMarker.getLatLng();
+            } else {
+                return;
+            }
+
             const distance = calculateDistance(
                 position.coords.latitude,
                 position.coords.longitude,
-                destLatLng.lat,
-                destLatLng.lng
+                targetDestination.lat,
+                targetDestination.lng
             );
 
-            document.getElementById('distance-display').textContent = `Distance to destination: ${distance.toFixed(0)} meters`;
+            document.getElementById('distance-display').textContent = `Distance to Destination ${currentManualDestinationIndex + 1 || ''}: ${distance.toFixed(0)} meters`;
+
+            if (manualDestinations.length > 0 && distance <= ARRIVAL_THRESHOLD && currentManualDestinationIndex < manualDestinations.length - 1) {
+                currentManualDestinationIndex++;
+                updateARDestination();
+                setStatus(`Arrived at Destination ${currentManualDestinationIndex}. Navigating to Destination ${currentManualDestinationIndex + 1}`);
+            } else if (manualDestinations.length > 0 && distance <= ARRIVAL_THRESHOLD && currentManualDestinationIndex === manualDestinations.length - 1) {
+                setStatus("Arrived at final destination!");
+            }
         }
 
         // Handle location errors
@@ -385,20 +470,34 @@
                 setStatus('Please set a destination on the map first.');
                 return;
             }
+            startARNavigationToPoint(destinationMarker.getLatLng());
+        });
+
+        document.getElementById('start-manual-ar').addEventListener('click', () => {
+            initializeARWithManualDestinations();
+        });
+
+        function startARNavigationToPoint(destination) {
             hideElement('map');
             hideElement('start-ar');
+            hideElement('start-manual-ar');
             showElement('back-button');
             showElement('distance-display');
-            initializeAR();
-        });
+            initializeAR(destination);
+            arMode = true;
+            setStatus('Navigating to destination');
+        }
 
         document.getElementById('back-button').addEventListener('click', () => {
             showElement('map');
             showElement('start-ar');
+            showElement('start-manual-ar');
             hideElement('back-button');
             hideElement('distance-display');
             document.querySelector('a-scene').style.display = 'none';
             arMode = false;
+            manualDestinations = []; // Clear manual destinations
+            setStatus('Click on the map to set a single destination, or enter two destinations below.');
         });
 
         document.getElementById('retry-button').addEventListener('click', () => {
