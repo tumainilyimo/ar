@@ -3,28 +3,45 @@
 <head>
   <meta charset="UTF-8">
   <!-- Important for mobile scaling -->
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0, user-scalable=no"
+  />
 
-  <title>AR GPS Navigation with Fixes</title>
+  <title>AR GPS Navigation (with Route + Back Button Fix)</title>
 
   <!-- Leaflet CSS & JS -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+  />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <!-- Leaflet Routing Machine CSS & JS -->
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet-routing-machine@latest/dist/leaflet-routing-machine.css"
+  />
+  <script
+    src="https://unpkg.com/leaflet-routing-machine@latest/dist/leaflet-routing-machine.js"
+  ></script>
+  <!-- (Optional) If you want OSRM via a default demo server, also include: -->
+  <script
+    src="https://unpkg.com/@mapbox/polyline@1.1.1/dist/polyline.js"
+  ></script>
 
   <!-- A-Frame and AR.js -->
   <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
   <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
 
   <style>
-    /* Basic styling and layout */
-
     body {
       margin: 0;
       padding: 0;
       overflow: hidden;
       font-family: Arial, sans-serif;
       background-color: #f0f0f0;
-      /* Touch handling to avoid accidental scrolling when interacting with map/AR */
+      /* Prevent scrolling when touching on mobile */
       touch-action: none;
     }
 
@@ -36,72 +53,7 @@
       width: 100%;
       height: 100vh;
       z-index: 1;
-    }
-
-    /* UI overlay (status bar, buttons, etc.) */
-    #ui-overlay {
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      z-index: 2;
-      pointer-events: none;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: space-between;
-      /* We also place buttons in here with pointer-events: auto; */
-    }
-
-    /* Status bar at the top */
-    #status-bar {
-      margin-top: 20px;
-      background-color: rgba(255, 255, 255, 0.9);
-      padding: 8px 16px;
-      border-radius: 20px;
-      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-      pointer-events: auto;
-    }
-
-    /* Distance display near bottom */
-    #distance-display {
-      margin-bottom: 80px;
-      background-color: rgba(255, 255, 255, 0.9);
-      padding: 8px 16px;
-      border-radius: 20px;
-      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-      pointer-events: auto;
-      display: none;
-    }
-
-    /* Buttons (e.g., Start AR, Back, Retry) */
-    .button {
-      pointer-events: auto;
-      padding: 12px 24px;
-      background-color: #4CAF50;
-      color: white;
-      border: none;
-      border-radius: 4px;
-      cursor: pointer;
-      font-size: 16px;
-      margin: 10px;
-      box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-    }
-    .button:active {
-      transform: translateY(1px);
-    }
-
-    #start-ar {
-      display: none; /* Will appear after setting a destination */
-    }
-
-    #back-button {
-      display: none; /* Visible only in AR mode */
-    }
-
-    #retry-button {
-      display: none; /* Visible if geolocation fails */
+      display: block; /* We show/hide this in code */
     }
 
     /* Loading overlay with spinner */
@@ -130,37 +82,97 @@
       100% { transform: rotate(360deg); }
     }
 
+    /* UI overlay (status bar, buttons, etc.) */
+    #ui-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 2;
+      pointer-events: none;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    /* Status bar at the top */
+    #status-bar {
+      margin-top: 20px;
+      background-color: rgba(255, 255, 255, 0.9);
+      padding: 8px 16px;
+      border-radius: 20px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      pointer-events: auto;
+    }
+
+    /* Distance display near bottom */
+    #distance-display {
+      margin-bottom: 80px;
+      background-color: rgba(255, 255, 255, 0.9);
+      padding: 8px 16px;
+      border-radius: 20px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      pointer-events: auto;
+      display: none; /* Shown in AR mode */
+    }
+
+    /* Buttons (e.g., Start AR, Back, Retry) */
+    .button {
+      pointer-events: auto;
+      padding: 12px 24px;
+      background-color: #4CAF50;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 16px;
+      margin: 10px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    }
+    .button:active {
+      transform: translateY(1px);
+    }
+
+    #start-ar {
+      display: none; /* Will appear after setting a destination on the map */
+    }
+    #back-button {
+      display: none; /* Only visible in AR mode */
+    }
+    #retry-button {
+      display: none; /* Shown if location fails */
+    }
+
     /* AR Scene hidden by default */
     a-scene {
-      display: none; /* We'll show it when "Start AR" is clicked */
+      display: none;
       position: absolute;
       top: 0;
       left: 0;
       width: 100%;
       height: 100%;
-      z-index: 3; /* On top of everything when active */
+      z-index: 3;
     }
   </style>
 </head>
-
 <body>
   <!-- Map container -->
   <div id="map"></div>
 
-  <!-- Loading overlay (shown at start or while re-initializing) -->
+  <!-- Loading overlay -->
   <div id="loading-overlay">
     <div class="loading-spinner"></div>
   </div>
 
-  <!-- UI Overlay -->
+  <!-- UI overlay -->
   <div id="ui-overlay">
-    <!-- Status message area -->
     <div id="status-bar">Initializing...</div>
-    
-    <!-- Distance display (hidden until in AR mode) -->
+
     <div id="distance-display"></div>
 
-    <!-- Buttons (bottom area) -->
+    <!-- Bottom buttons container -->
     <div style="margin-bottom: 30px;">
       <button id="start-ar" class="button">Start AR Navigation</button>
       <button id="back-button" class="button">Back to Map</button>
@@ -171,11 +183,16 @@
   <!-- AR Scene -->
   <a-scene
     embedded
+    vr-mode-ui="enabled: false"
     arjs="sourceType: webcam; debugUIEnabled: false; trackingMethod: best;"
-    vr-mode-ui="enabled: false">
-
-    <!-- GPS camera (from AR.js) -->
-    <a-camera gps-camera rotation-reader look-controls-enabled="false" arjs-look-at-disabled></a-camera>
+  >
+    <!-- GPS camera (for AR) -->
+    <a-camera
+      gps-camera
+      rotation-reader
+      look-controls-enabled="false"
+      arjs-look-at-disabled
+    ></a-camera>
 
     <!-- Destination marker in AR -->
     <a-entity id="destination-marker"></a-entity>
@@ -186,12 +203,13 @@
     // Global Variables
     // ------------------------------------------------------------
     let map, userMarker, destinationMarker;
-    let watchId = null;             // ID from geolocation watch
-    let currentPosition = null;     // Holds the latest user position
-    let arMode = false;            // Track if we are in AR mode
+    let routeControl = null;       // Leaflet Routing Machine control
+    let watchId = null;            // Geolocation watch handle
+    let currentPosition = null;    // Latest user position
+    let arMode = false;            // Flag: are we in AR mode?
 
     // ------------------------------------------------------------
-    // Utility / Helper Functions
+    // Helper Functions
     // ------------------------------------------------------------
     function showElement(id) {
       document.getElementById(id).style.display = 'block';
@@ -202,21 +220,19 @@
     function setStatus(message) {
       document.getElementById('status-bar').textContent = message;
     }
-
-    // Calculate distance between two lat/long pairs in meters
+    // Compute distance in meters between two lat/lon pairs
     function calculateDistance(lat1, lon1, lat2, lon2) {
-      const R = 6371e3; // Earth's radius in meters
-      const φ1 = lat1 * Math.PI / 180;
-      const φ2 = lat2 * Math.PI / 180;
-      const Δφ = (lat2 - lat1) * Math.PI / 180;
-      const Δλ = (lon2 - lon1) * Math.PI / 180;
+      const R = 6371e3; // Earth radius in meters
+      const φ1 = (lat1 * Math.PI) / 180;
+      const φ2 = (lat2 * Math.PI) / 180;
+      const Δφ = ((lat2 - lat1) * Math.PI) / 180;
+      const Δλ = ((lon2 - lon1) * Math.PI) / 180;
 
-      const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
-                Math.cos(φ1) * Math.cos(φ2) *
-                Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+      const a =
+        Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+        Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
       const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-
-      return R * c; // Distance in meters
+      return R * c;
     }
 
     // ------------------------------------------------------------
@@ -227,44 +243,43 @@
         showElement('loading-overlay');
         setStatus('Checking location permissions...');
 
-        // (Optional) Check geolocation permission if supported
+        // Optional: check geolocation permission if browser supports
         if (navigator.permissions) {
-          const permissionStatus = await navigator.permissions.query({ name: 'geolocation' });
+          const permissionStatus = await navigator.permissions.query({
+            name: 'geolocation',
+          });
           if (permissionStatus.state === 'denied') {
             hideElement('loading-overlay');
-            setStatus('Location permission denied. Please enable it in your browser/device settings.');
+            setStatus(
+              'Location permission denied. Please enable location in settings.'
+            );
             showElement('retry-button');
             return;
           }
         }
 
         setStatus('Fetching your current location...');
-        
-        // Attempt to get current position with increased timeout
+
+        // Try to get a current position with a bigger timeout
         const position = await getCurrentPosition();
+
         hideElement('loading-overlay');
-
-        // Initialize map with that position
         initializeMap(position);
-        
-        // Start watching for position updates
         startLocationTracking();
-
-        setStatus('Tap on the map to set your destination');
+        setStatus('Tap on the map to set a destination.');
       } catch (error) {
         handleLocationError(error);
       }
     }
 
-    // Get current position (returns a Promise)
+    // Get a single position
     function getCurrentPosition() {
       return new Promise((resolve, reject) => {
         const options = {
           enableHighAccuracy: true,
-          timeout: 30000,  // 30-second timeout
-          maximumAge: 0
+          timeout: 30000, // 30s
+          maximumAge: 0,
         };
-
         navigator.geolocation.getCurrentPosition(resolve, reject, options);
       });
     }
@@ -272,70 +287,88 @@
     // Initialize Leaflet map
     function initializeMap(position) {
       const { latitude, longitude } = position.coords;
-
-      // Create the map centered on the user's location
+      // Create map at user’s location
       map = L.map('map').setView([latitude, longitude], 18);
 
-      // Add OSM tile layer
+      // OSM tile layer
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '© OpenStreetMap contributors'
+        attribution: '© OpenStreetMap contributors',
       }).addTo(map);
 
-      // User marker
+      // Add user marker
       userMarker = L.marker([latitude, longitude], {
         icon: L.divIcon({
           html: '📍',
           className: 'user-location-marker',
-          iconSize: [25, 25]
-        })
+          iconSize: [25, 25],
+        }),
       }).addTo(map);
 
-      // Handle clicks on the map to set destination
+      // Listen for map clicks to set destination
       map.on('click', handleMapClick);
     }
 
-    // Start continuous location tracking (watch)
+    // Set up continuous location watching
     function startLocationTracking() {
       const options = {
         enableHighAccuracy: true,
-        timeout: 60000,  // 1-minute timeout
-        maximumAge: 0
+        timeout: 60000, // 1 minute
+        maximumAge: 0,
       };
 
       watchId = navigator.geolocation.watchPosition(
-        updatePosition,     // success
-        handleLocationError, // error
+        updatePosition,
+        handleLocationError,
         options
       );
     }
 
-    // Called repeatedly by watchPosition when location changes
+    // Update the user marker and AR elements on new position
     function updatePosition(position) {
       currentPosition = position;
       const { latitude, longitude } = position.coords;
-
-      // Update user marker on the map
       if (userMarker) {
         userMarker.setLatLng([latitude, longitude]);
       }
 
-      // If in AR mode and we have a destination, update AR elements
       if (arMode && destinationMarker) {
-        updateARElements(position);
+        updateARElements();
       }
     }
 
     // ------------------------------------------------------------
-    // Map Click -> Set Destination
+    // Handle Map Click (Set or Change Destination)
     // ------------------------------------------------------------
     function handleMapClick(e) {
-      // Remove old destination if any
+      // Remove old destination marker
       if (destinationMarker) {
         map.removeLayer(destinationMarker);
+        destinationMarker = null;
+      }
+      // Remove old route if any
+      if (routeControl) {
+        map.removeControl(routeControl);
+        routeControl = null;
       }
 
-      // Create a new Leaflet marker for the destination
+      // Place new Leaflet marker
       destinationMarker = L.marker(e.latlng).addTo(map);
+
+      // Calculate and display route using Leaflet Routing Machine
+      if (currentPosition) {
+        const userLat = currentPosition.coords.latitude;
+        const userLng = currentPosition.coords.longitude;
+
+        // Create route control (using OSRM by default)
+        routeControl = L.Routing.control({
+          waypoints: [
+            L.latLng(userLat, userLng),
+            L.latLng(e.latlng.lat, e.latlng.lng),
+          ],
+          routeWhileDragging: false,
+          showAlternatives: false,
+        }).addTo(map);
+      }
 
       showElement('start-ar');
       setStatus('Destination set! Tap "Start AR Navigation" to begin');
@@ -345,75 +378,80 @@
     // AR Initialization
     // ------------------------------------------------------------
     function initializeAR() {
-      // We must have a current user position and destination set
       if (!currentPosition || !destinationMarker) {
-        setStatus('Cannot start AR: no user position or destination!');
+        setStatus('No user position or no destination set!');
         return;
       }
 
-      // Show AR scene, hide map
+      // Show AR scene, hide the map
       const scene = document.querySelector('a-scene');
       scene.style.display = 'block';
       hideElement('map');
 
-      // Grab destination coordinates from Leaflet marker
+      // Destination marker in AR
       const destEntity = document.getElementById('destination-marker');
-      const destPos = destinationMarker.getLatLng();
+      const latLng = destinationMarker.getLatLng();
+      destEntity.setAttribute(
+        'gps-entity-place',
+        `latitude: ${latLng.lat}; longitude: ${latLng.lng}`
+      );
 
-      // Attach AR.js gps-entity-place
-      destEntity.setAttribute('gps-entity-place', `latitude: ${destPos.lat}; longitude: ${destPos.lng}`);
-
-      // Add a 3D shape or model to represent the destination
+      // Add a 3D shape
       const box = document.createElement('a-box');
       box.setAttribute('color', 'red');
-      box.setAttribute('scale', '20 20 20'); // Adjust size as needed
+      box.setAttribute('scale', '20 20 20'); // adjust size
       destEntity.appendChild(box);
 
-      // Add text label that always faces the camera
+      // Add a text label
       const text = document.createElement('a-text');
       text.setAttribute('value', 'DESTINATION');
       text.setAttribute('look-at', '[gps-camera]');
       text.setAttribute('scale', '100 100 100');
-      text.setAttribute('position', '0 40 0'); // offset above the box
+      text.setAttribute('position', '0 40 0');
       destEntity.appendChild(text);
 
       arMode = true;
+      updateARElements(); // Update distance once
     }
 
-    // Called every time we get a new user position in AR mode
-    function updateARElements(position) {
-      if (!destinationMarker) return;
+    // Update AR elements (distance text, etc.)
+    function updateARElements() {
+      if (!destinationMarker || !currentPosition) return;
 
-      const destPos = destinationMarker.getLatLng();
+      const { latitude, longitude } = currentPosition.coords;
+      const destLatLng = destinationMarker.getLatLng();
       const distance = calculateDistance(
-        position.coords.latitude,
-        position.coords.longitude,
-        destPos.lat,
-        destPos.lng
+        latitude,
+        longitude,
+        destLatLng.lat,
+        destLatLng.lng
       );
 
-      const distanceDisplay = document.getElementById('distance-display');
-      distanceDisplay.textContent = `Distance to destination: ${distance.toFixed(0)} m`;
+      const distDisplay = document.getElementById('distance-display');
+      distDisplay.textContent =
+        'Distance to destination: ' + distance.toFixed(0) + ' m';
     }
 
     // ------------------------------------------------------------
     // Error Handling
     // ------------------------------------------------------------
     function handleLocationError(error) {
-      // Hide loading overlay, show retry
       hideElement('loading-overlay');
       showElement('retry-button');
 
       let message = 'Location error: ';
       switch (error.code) {
         case error.PERMISSION_DENIED:
-          message += 'Permission denied. Please allow location access in your browser/device settings.';
+          message +=
+            'Permission denied. Enable location in your device/browser settings.';
           break;
         case error.POSITION_UNAVAILABLE:
-          message += 'Position unavailable. Move to an area with better GPS signal (e.g., outdoors).';
+          message +=
+            'Position unavailable. Move to an area with better GPS signal.';
           break;
         case error.TIMEOUT:
-          message += 'Request timed out. Try increasing the timeout or moving to a better signal area.';
+          message +=
+            'Request timed out. Try again or move to a better signal area.';
           break;
         default:
           message += error.message;
@@ -422,8 +460,9 @@
     }
 
     // ------------------------------------------------------------
-    // Button Event Listeners
+    // Buttons
     // ------------------------------------------------------------
+    // Start AR button
     document.getElementById('start-ar').addEventListener('click', () => {
       if (!destinationMarker) {
         setStatus('Please tap on the map to set a destination first.');
@@ -435,24 +474,26 @@
       initializeAR();
     });
 
+    // Back to Map button
     document.getElementById('back-button').addEventListener('click', () => {
-      // Return to map view
-      const scene = document.querySelector('a-scene');
-      scene.style.display = 'none';  // Hide AR
+      // Hide AR scene, show map
+      document.querySelector('a-scene').style.display = 'none';
       showElement('map');
-      showElement('start-ar');       // Let user re-enter AR if they want
+      showElement('start-ar'); // Let user go back to AR again if they want
       hideElement('back-button');
       hideElement('distance-display');
       arMode = false;
+      setStatus('You are back on the map.'); 
     });
 
+    // Retry GPS button
     document.getElementById('retry-button').addEventListener('click', () => {
       hideElement('retry-button');
       initializeApp();
     });
 
     // ------------------------------------------------------------
-    // Start the application once page loads
+    // Start the app on page load
     // ------------------------------------------------------------
     window.addEventListener('load', () => {
       initializeApp();
