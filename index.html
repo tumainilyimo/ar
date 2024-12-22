@@ -3,151 +3,251 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Tanzania AR Navigation</title>
+    <title>AR GPS Navigation</title>
 
-    <!-- Load Leaflet first -->
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css"/>
-    <script src="https://unpkg.com/leaflet@1.9.3/dist/leaflet.js"></script>
+    <!-- Leaflet CSS and JS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
-    <!-- Load AR.js and A-Frame with specific versions known to work well together -->
-    <script src="https://aframe.io/releases/1.0.4/aframe.min.js"></script>
-    <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar-nft.js"></script>
-    <script src="https://raw.githack.com/AR-js-org/AR.js/master/three.js/build/ar-threex-location-only.js"></script>
-    
+    <!-- A-Frame and AR.js -->
+    <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
+    <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
+
     <style>
         body {
             margin: 0;
+            padding: 0;
             overflow: hidden;
             font-family: Arial, sans-serif;
             touch-action: none;
         }
+
         #map {
+            position: absolute;
+            top: 0;
+            left: 0;
             width: 100%;
             height: 100vh;
-            position: absolute;
             z-index: 1;
         }
-        .ar-overlay {
+
+        #ui-overlay {
             position: fixed;
             top: 0;
             left: 0;
             width: 100%;
             height: 100%;
             z-index: 2;
-            display: none;
+            pointer-events: none;
         }
-        #startARButton {
-            position: fixed;
-            bottom: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            z-index: 3;
-            padding: 15px 30px;
+
+        .button {
+            pointer-events: auto;
+            padding: 12px 24px;
             background-color: #4CAF50;
             color: white;
             border: none;
-            border-radius: 5px;
-            font-size: 16px;
+            border-radius: 4px;
             cursor: pointer;
+            font-size: 16px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
         }
-        #backButton {
-            position: fixed;
-            top: 20px;
-            left: 20px;
-            z-index: 999;
-            padding: 10px 20px;
-            background-color: #fff;
-            border: 1px solid #ccc;
-            border-radius: 5px;
-            display: none;
+
+        .button:active {
+            transform: translateY(1px);
         }
-        #status {
+
+        #status-bar {
             position: fixed;
             top: 20px;
             left: 50%;
             transform: translateX(-50%);
-            z-index: 999;
             background-color: rgba(255, 255, 255, 0.9);
-            padding: 10px;
-            border-radius: 5px;
+            padding: 10px 20px;
+            border-radius: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
             text-align: center;
+            z-index: 1000;
+            pointer-events: auto;
+        }
+
+        #start-ar {
+            position: fixed;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: none;
+        }
+
+        #back-button {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            display: none;
+            z-index: 1000;
+        }
+
+        #retry-button {
+            position: fixed;
+            top: 80px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: none;
+        }
+
+        #distance-display {
+            position: fixed;
+            bottom: 90px;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: rgba(255, 255, 255, 0.9);
+            padding: 10px 20px;
+            border-radius: 20px;
+            display: none;
+            z-index: 1000;
+        }
+
+        .ar-only {
+            display: none;
+        }
+
+        #loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 9999;
+        }
+
+        .loading-spinner {
+            width: 50px;
+            height: 50px;
+            border: 5px solid #f3f3f3;
+            border-top: 5px solid #3498db;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
         }
     </style>
 </head>
 <body>
+    <!-- Map container -->
     <div id="map"></div>
-    <div id="status">Getting your location...</div>
-    <button id="startARButton" style="display: none;">Start AR Navigation</button>
-    <button id="backButton">Back to Map</button>
+
+    <!-- Loading overlay -->
+    <div id="loading-overlay">
+        <div class="loading-spinner"></div>
+    </div>
+
+    <!-- UI Elements -->
+    <div id="ui-overlay">
+        <div id="status-bar">Initializing GPS...</div>
+        <button id="start-ar" class="button">Start AR Navigation</button>
+        <button id="back-button" class="button">Back to Map</button>
+        <button id="retry-button" class="button">Retry GPS</button>
+        <div id="distance-display"></div>
+    </div>
 
     <!-- AR Scene -->
     <a-scene 
-        class="ar-overlay"
-        vr-mode-ui="enabled: false"
         embedded
-        arjs="sourceType: webcam; debugUIEnabled: false; trackingMethod: best;">
+        arjs="sourceType: webcam; debugUIEnabled: false; trackingMethod: best;"
+        vr-mode-ui="enabled: false"
+        style="display: none;">
         
-        <a-camera id="camera" look-controls-enabled="false" arjs-device-orientation-controls="smoothingFactor: 0.1" gps-new-camera="gpsMinDistance: 5"></a-camera>
-        <a-entity id="destinations"></a-entity>
+        <a-camera gps-camera rotation-reader></a-camera>
+        <a-entity id="ar-pointer"></a-entity>
+        <a-entity id="destination-marker"></a-entity>
     </a-scene>
 
     <script>
-        let map;
-        let userMarker;
-        let destinationMarker;
-        let watchId;
+        // Global variables
+        let map, userMarker, destinationMarker;
+        let watchId = null;
         let currentPosition = null;
+        let arMode = false;
 
-        // Initialize the application
-        async function init() {
+        // Utility functions
+        function showElement(id) {
+            document.getElementById(id).style.display = 'block';
+        }
+
+        function hideElement(id) {
+            document.getElementById(id).style.display = 'none';
+        }
+
+        function setStatus(message) {
+            document.getElementById('status-bar').textContent = message;
+        }
+
+        function calculateDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371e3; // Earth's radius in meters
+            const φ1 = lat1 * Math.PI / 180;
+            const φ2 = lat2 * Math.PI / 180;
+            const Δφ = (lat2 - lat1) * Math.PI / 180;
+            const Δλ = (lon2 - lon1) * Math.PI / 180;
+
+            const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
+                    Math.cos(φ1) * Math.cos(φ2) *
+                    Math.sin(Δλ/2) * Math.sin(Δλ/2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+
+            return R * c; // Distance in meters
+        }
+
+        // Initialize application
+        async function initializeApp() {
             try {
-                // Get initial position
+                showElement('loading-overlay');
                 const position = await getCurrentPosition();
-                currentPosition = position;
+                hideElement('loading-overlay');
                 
-                // Initialize map
                 initializeMap(position);
+                startLocationTracking();
                 
-                // Start watching position
-                startPositionTracking();
-                
-                document.getElementById('status').textContent = 'Click anywhere to set destination';
+                setStatus('Click on the map to set destination');
             } catch (error) {
-                document.getElementById('status').textContent = 'Error: ' + error.message;
+                handleLocationError(error);
             }
         }
 
-        // Get current position as a promise
+        // Get current position with promise
         function getCurrentPosition() {
             return new Promise((resolve, reject) => {
-                navigator.geolocation.getCurrentPosition(
-                    position => resolve(position),
-                    error => reject(error),
-                    {
-                        enableHighAccuracy: true,
-                        timeout: 5000,
-                        maximumAge: 0
-                    }
-                );
+                const options = {
+                    enableHighAccuracy: true,
+                    timeout: 30000,
+                    maximumAge: 0
+                };
+
+                navigator.geolocation.getCurrentPosition(resolve, reject, options);
             });
         }
 
-        // Initialize the map
+        // Initialize map
         function initializeMap(position) {
-            const lat = position.coords.latitude;
-            const lng = position.coords.longitude;
+            const { latitude, longitude } = position.coords;
 
-            map = L.map('map').setView([lat, lng], 18);
+            map = L.map('map').setView([latitude, longitude], 18);
             
             L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
                 attribution: '© OpenStreetMap contributors'
             }).addTo(map);
 
             // Add user marker
-            userMarker = L.marker([lat, lng], {
+            userMarker = L.marker([latitude, longitude], {
                 icon: L.divIcon({
-                    className: 'user-marker',
                     html: '📍',
+                    className: 'user-location-marker',
                     iconSize: [25, 25]
                 })
             }).addTo(map);
@@ -156,99 +256,123 @@
             map.on('click', handleMapClick);
         }
 
-        // Start tracking user position
-        function startPositionTracking() {
+        // Start tracking location
+        function startLocationTracking() {
+            const options = {
+                enableHighAccuracy: true,
+                timeout: 30000,
+                maximumAge: 0
+            };
+
             watchId = navigator.geolocation.watchPosition(
                 updatePosition,
-                error => console.error('Error watching position:', error),
-                {
-                    enableHighAccuracy: true,
-                    timeout: 5000,
-                    maximumAge: 0
-                }
+                handleLocationError,
+                options
             );
         }
 
         // Update position
         function updatePosition(position) {
             currentPosition = position;
-            const lat = position.coords.latitude;
-            const lng = position.coords.longitude;
+            const { latitude, longitude } = position.coords;
 
             if (userMarker) {
-                userMarker.setLatLng([lat, lng]);
+                userMarker.setLatLng([latitude, longitude]);
             }
 
-            if (destinationMarker) {
+            if (arMode && destinationMarker) {
                 updateARElements(position);
             }
         }
 
-        // Handle map clicks to set destination
+        // Handle map clicks
         function handleMapClick(e) {
-            const latlng = e.latlng;
-
             if (destinationMarker) {
                 map.removeLayer(destinationMarker);
             }
 
-            destinationMarker = L.marker(latlng).addTo(map);
-            document.getElementById('startARButton').style.display = 'block';
-            document.getElementById('status').textContent = 'Destination set! Click Start AR Navigation';
+            destinationMarker = L.marker(e.latlng).addTo(map);
+            showElement('start-ar');
+            setStatus('Destination set! Click "Start AR Navigation" to begin');
         }
 
-        // Start AR Navigation
-        document.getElementById('startARButton').addEventListener('click', () => {
+        // Initialize AR
+        function initializeAR() {
             if (!currentPosition || !destinationMarker) return;
 
-            document.getElementById('map').style.display = 'none';
-            document.getElementById('startARButton').style.display = 'none';
-            document.getElementById('backButton').style.display = 'block';
-            document.querySelector('.ar-overlay').style.display = 'block';
+            const scene = document.querySelector('a-scene');
+            scene.style.display = 'block';
+            
+            const destEntity = document.getElementById('destination-marker');
+            const destPosition = destinationMarker.getLatLng();
 
-            initAR();
-        });
-
-        // Initialize AR
-        function initAR() {
-            const destinations = document.getElementById('destinations');
-            destinations.innerHTML = ''; // Clear existing
-
-            // Add destination marker
-            const destinationEntity = document.createElement('a-entity');
-            destinationEntity.setAttribute('gps-new-entity-place', {
-                latitude: destinationMarker.getLatLng().lat,
-                longitude: destinationMarker.getLatLng().lng
-            });
-
-            // Add visible marker
-            const marker = document.createElement('a-box');
-            marker.setAttribute('material', 'color: red');
-            marker.setAttribute('scale', '20 20 20');
-            marker.setAttribute('look-at', '[gps-new-camera]');
-            destinationEntity.appendChild(marker);
+            // Create destination marker in AR
+            destEntity.setAttribute('gps-entity-place', `latitude: ${destPosition.lat}; longitude: ${destPosition.lng}`);
+            
+            // Add 3D model or primitive shape
+            const model = document.createElement('a-box');
+            model.setAttribute('color', 'red');
+            model.setAttribute('scale', '20 20 20');
+            destEntity.appendChild(model);
 
             // Add text label
             const text = document.createElement('a-text');
             text.setAttribute('value', 'DESTINATION');
+            text.setAttribute('look-at', '[gps-camera]');
             text.setAttribute('scale', '100 100 100');
-            text.setAttribute('look-at', '[gps-new-camera]');
             text.setAttribute('position', '0 30 0');
-            destinationEntity.appendChild(text);
+            destEntity.appendChild(text);
 
-            destinations.appendChild(destinationEntity);
+            arMode = true;
         }
 
-        // Back button handler
-        document.getElementById('backButton').addEventListener('click', () => {
-            document.getElementById('map').style.display = 'block';
-            document.getElementById('startARButton').style.display = 'block';
-            document.getElementById('backButton').style.display = 'none';
-            document.querySelector('.ar-overlay').style.display = 'none';
+        // Handle location errors
+        function handleLocationError(error) {
+            hideElement('loading-overlay');
+            showElement('retry-button');
+
+            let message = 'Location error: ';
+            switch(error.code) {
+                case 1:
+                    message += 'Please enable location permissions';
+                    break;
+                case 2:
+                    message += 'Position unavailable';
+                    break;
+                case 3:
+                    message += 'Timeout - Please try again';
+                    break;
+                default:
+                    message += error.message;
+            }
+            setStatus(message);
+        }
+
+        // Event Listeners
+        document.getElementById('start-ar').addEventListener('click', () => {
+            hideElement('map');
+            hideElement('start-ar');
+            showElement('back-button');
+            showElement('distance-display');
+            initializeAR();
         });
 
-        // Initialize the application
-        init();
+        document.getElementById('back-button').addEventListener('click', () => {
+            showElement('map');
+            showElement('start-ar');
+            hideElement('back-button');
+            hideElement('distance-display');
+            document.querySelector('a-scene').style.display = 'none';
+            arMode = false;
+        });
+
+        document.getElementById('retry-button').addEventListener('click', () => {
+            hideElement('retry-button');
+            initializeApp();
+        });
+
+        // Start the application
+        initializeApp();
     </script>
 </body>
 </html>
