@@ -5,19 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>AR Navigation System</title>
 
-    <!-- Preload critical resources -->
-    <link rel="preload" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" as="script">
-    <link rel="preload" href="https://aframe.io/releases/1.4.2/aframe.min.js" as="script">
-
-    <!-- Load stylesheets first -->
+    <!-- External Libraries -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@latest/dist/leaflet-routing-machine.css"/>
-
-    <!-- Load scripts with defer -->
-    <script defer src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script defer src="https://unpkg.com/leaflet-routing-machine@latest/dist/leaflet-routing-machine.js"></script>
-    <script defer src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
-    <script defer src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
+    <script src="https://unpkg.com/leaflet-routing-machine@latest/dist/leaflet-routing-machine.js"></script>
+    <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
+    <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
 
     <style>
         body { 
@@ -25,37 +19,6 @@
             padding: 0; 
             overflow: hidden; 
             font-family: Arial, sans-serif;
-        }
-
-        .loading-overlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.8);
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            z-index: 9999;
-            color: white;
-            font-size: 18px;
-            flex-direction: column;
-        }
-
-        .loading-spinner {
-            border: 5px solid #f3f3f3;
-            border-top: 5px solid #2196F3;
-            border-radius: 50%;
-            width: 50px;
-            height: 50px;
-            animation: spin 1s linear infinite;
-            margin-bottom: 20px;
-        }
-
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
         }
 
         .camera-view {
@@ -112,16 +75,10 @@
             cursor: pointer;
             font-weight: bold;
             transition: background-color 0.3s;
-            min-width: 100px;
         }
 
         button:hover {
             background: #1976D2;
-        }
-
-        button:disabled {
-            background: #ccc;
-            cursor: not-allowed;
         }
 
         .direction-indicator {
@@ -206,29 +163,13 @@
             font-size: 12px;
             z-index: 1000;
         }
-
-        .distance-marker {
-            position: absolute;
-            background: rgba(255, 255, 255, 0.9);
-            padding: 4px 8px;
-            border-radius: 4px;
-            font-size: 12px;
-            transform: translate(-50%, -150%);
-            white-space: nowrap;
-        }
     </style>
 </head>
 <body>
-    <!-- Loading Overlay -->
-    <div id="loadingOverlay" class="loading-overlay">
-        <div class="loading-spinner"></div>
-        <div id="loadingText">Initializing System...</div>
-    </div>
-
     <!-- AR Camera View -->
     <div class="camera-view">
         <a-scene embedded arjs="sourceType: webcam; debugUIEnabled: false; detectionMode: mono_and_matrix;">
-            <a-camera gps-camera rotation-reader></a-camera>
+            <a-camera gps-camera="simulateLatitude: 0; simulateLongitude: 0" rotation-reader></a-camera>
             <a-entity id="navigation-points"></a-entity>
         </a-scene>
     </div>
@@ -248,8 +189,7 @@
     <!-- Controls -->
     <div class="controls">
         <input type="text" id="destination" placeholder="Enter your destination">
-        <button id="navButton" onclick="startNavigation()">Navigate</button>
-        <button id="recenterButton" onclick="recenterMap()" style="display: none;">Recenter</button>
+        <button onclick="startNavigation()">Navigate</button>
     </div>
 
     <!-- Status and Direction Indicators -->
@@ -270,42 +210,16 @@
         let currentInstruction = '';
         let isWrongDirection = false;
 
-        // Resource loading tracking
-        let resourcesLoaded = {
-            map: false,
-            camera: false,
-            location: false,
-            orientation: false
-        };
-
         // Initialize application
         document.addEventListener('DOMContentLoaded', async () => {
             try {
-                // Start loading sequence
-                const startTime = performance.now();
-
-                // Initialize components in parallel
-                await Promise.all([
-                    initializeAR().then(() => updateLoadingStatus('camera')),
-                    requestPermissions().then(() => updateLoadingStatus('orientation')),
-                    getCurrentPosition().then(position => {
-                        userLocation = [position.coords.latitude, position.coords.longitude];
-                        updateLoadingStatus('location');
-                    })
-                ]);
-
-                // Initialize map after we have location
-                await initializeMap();
-                updateLoadingStatus('map');
-
-                // Start tracking and orientation
+                await initializeAR();
+                await requestPermissions();
+                const position = await getCurrentPosition();
+                userLocation = [position.coords.latitude, position.coords.longitude];
+                initializeMap();
                 startLocationTracking();
-                await initializeDeviceOrientation();
-
-                // Calculate loading time
-                const loadTime = performance.now() - startTime;
-                console.log(`App loaded in ${Math.round(loadTime)}ms`);
-
+                initializeDeviceOrientation();
                 updateStatusIndicator('Ready to navigate');
             } catch (error) {
                 console.error('Initialization error:', error);
@@ -313,43 +227,16 @@
             }
         });
 
-        function updateLoadingStatus(resource) {
-            resourcesLoaded[resource] = true;
-            const remainingResources = Object.entries(resourcesLoaded)
-                .filter(([,v]) => !v)
-                .map(([k]) => k);
-            
-            const loadingText = document.getElementById('loadingText');
-            if (remainingResources.length > 0) {
-                loadingText.textContent = `Loading: ${remainingResources.join(', ')}...`;
-            } else {
-                document.getElementById('loadingOverlay').style.display = 'none';
-            }
-        }
-
         // AR Initialization
         async function initializeAR() {
-            try {
-                return new Promise((resolve) => {
-                    const scene = document.querySelector('a-scene');
-                    if (scene.hasLoaded) {
-                        resolve();
-                    } else {
-                        scene.addEventListener('loaded', resolve);
-                    }
-
-                    // Fallback in case AR takes too long
-                    setTimeout(() => {
-                        if (!resourcesLoaded.camera) {
-                            updateLoadingStatus('camera');
-                            resolve();
-                        }
-                    }, 5000);
-                });
-            } catch (error) {
-                console.error('AR initialization error:', error);
-                updateStatusIndicator('Error initializing AR');
-            }
+            return new Promise((resolve) => {
+                const scene = document.querySelector('a-scene');
+                if (scene.hasLoaded) {
+                    resolve();
+                } else {
+                    scene.addEventListener('loaded', resolve);
+                }
+            });
         }
 
         // Permission handling
@@ -390,27 +277,24 @@
             }
 
             watchId = navigator.geolocation.watchPosition(
-                (position) => {
-                    const { latitude, longitude, accuracy } = position.coords;
-                    
-                    // Only update if accuracy is good enough (< 20 meters)
-                    if (accuracy < 20) {
-                        userLocation = [latitude, longitude];
-                        if (userMarker) {
-                            userMarker.setLatLng(userLocation);
-                        }
-                        if (isNavigating) {
-                            updateNavigation();
-                        }
-                    }
-                },
+                updateUserLocation,
                 handleLocationError,
                 {
                     enableHighAccuracy: true,
-                    maximumAge: 1000,
+                    maximumAge: 0,
                     timeout: 5000
                 }
             );
+        }
+
+        function updateUserLocation(position) {
+            userLocation = [position.coords.latitude, position.coords.longitude];
+            if (userMarker) {
+                userMarker.setLatLng(userLocation);
+            }
+            if (isNavigating) {
+                updateNavigation();
+            }
         }
 
         function handleLocationError(error) {
@@ -419,36 +303,20 @@
         }
 
         // Map initialization
-        async function initializeMap() {
-            try {
-                map = L.map('map', {
-                    zoomControl: false,
-                    attributionControl: false
-                }).setView(userLocation, 15);
-
-                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                    maxZoom: 19,
-                    minZoom: 3,
-                    updateWhenIdle: false,
-                    updateWhenZooming: false,
-                    preferCanvas: true
-                }).addTo(map);
-
-                userMarker = L.marker(userLocation, {
-                    icon: L.divIcon({
-                        className: 'user-location-marker',
-                        html: '📍',
-                        iconSize: [25, 25],
-                        iconAnchor: [12, 24]
-                    })
-                }).addTo(map);
-
-                // Add recenter button functionality
-                document.getElementById('recenterButton').style.display = 'inline-block';
-            } catch (error) {
-                console.error('Map initialization error:', error);
-                updateStatusIndicator('Error loading map');
-            }
+        function initializeMap() {
+            map = L.map('map').setView(userLocation, 15);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '© OpenStreetMap contributors'
+            }).addTo(map);
+            
+            userMarker = L.marker(userLocation, {
+                icon: L.divIcon({
+                    className: 'user-location-marker',
+                    html: '📍',
+                    iconSize: [25, 25],
+                    iconAnchor: [12, 24]
+                })
+            }).addTo(map);
         }
 
         // Navigation functions
@@ -459,15 +327,11 @@
                 return;
             }
 
-            const navButton = document.getElementById('navButton');
-            navButton.disabled = true;
-
             try {
                 updateStatusIndicator('Calculating route...');
                 const destCoords = await geocodeLocation(destination);
                 if (!destCoords) {
                     updateStatusIndicator('Destination not found');
-                    navButton.disabled = false;
                     return;
                 }
 
@@ -476,29 +340,11 @@
                     userLocation = [position.coords.latitude, position.coords.longitude];
                 }
 
-                // Create route with retry mechanism
-                let retryCount = 0;
-                while (retryCount < 3) {
-                    try {
-                        await createRoute(userLocation, destCoords);
-                        isNavigating = true;
-                        break;
-                    } catch (error) {
-                        console.warn(`Route creation attempt ${retryCount + 1} failed:`, error);
-                        retryCount++;
-                        if (retryCount === 3) {
-                            throw new Error('Failed to create route after multiple attempts');
-                        }
-                        await new Promise(resolve => setTimeout(resolve, 1000)); // Wait before retry
-                    }
-                }
-                
-                document.getElementById('recenterButton').style.display = 'inline-block';
+                await createRoute(userLocation, destCoords);
+                isNavigating = true;
             } catch (error) {
                 console.error('Navigation error:', error);
                 updateStatusIndicator('Error creating route. Please try again.');
-            } finally {
-                navButton.disabled = false;
             }
         }
 
@@ -536,9 +382,7 @@
                 try {
                     routingControl = L.Routing.control({
                         router: L.Routing.osrmv1({
-                            serviceUrl: 'https://router.project-osrm.org/route/v1',
-                            profile: 'foot',
-                            timeout: 30000
+                            serviceUrl: 'https://router.project-osrm.org/route/v1'
                         }),
                         waypoints: [
                             L.latLng(start[0], start[1]),
@@ -550,12 +394,14 @@
                         lineOptions: {
                             styles: [{ color: '#2196F3', weight: 6 }]
                         },
-                        show: false
+                        show: false // Don't show routing narrative
                     }).addTo(map);
 
                     routingControl.on('routesfound', (event) => {
                         if (event && event.routes && event.routes.length > 0) {
                             handleRouteFound(event);
+                            isNavigating = true;
+                            updateStatusIndicator('Navigation started');
                             resolve(event);
                         } else {
                             reject(new Error('No route found'));
@@ -576,38 +422,28 @@
 
         function handleRouteFound(event) {
             try {
-                // Process and optimize route points
-                routePoints = event.routes[0].coordinates.map(coord => ({
-                    lat: coord.lat,
-                    lng: coord.lng
-                }));
-
-                // Validate route points
+                routePoints = event.routes[0].coordinates;
+                currentRouteIndex = 0;
+                
                 if (!routePoints || routePoints.length === 0) {
                     throw new Error('No valid route points received');
                 }
 
-                currentRouteIndex = 0;
-
-                // Update map view
                 const bounds = L.latLngBounds(routePoints);
-                map.fitBounds(bounds, { 
-                    padding: [50, 50],
-                    maxZoom: 18
-                });
-
+                map.fitBounds(bounds, { padding: [50, 50] });
+                
                 updateNavigation();
-                updateStatusIndicator('Route found - Starting navigation');
+                updateStatusIndicator('Route found - Following navigation');
             } catch (error) {
                 console.error('Error handling route:', error);
-                throw error;
+                updateStatusIndicator('Error processing route');
             }
         }
 
+        // Navigation updates
         function updateNavigation() {
             if (!routePoints.length || !userLocation) return;
 
-            // Check for waypoint progression
             if (currentRouteIndex < routePoints.length - 1) {
                 const nextPointCoords = routePoints[currentRouteIndex];
                 const distanceToNext = calculateDistance(
@@ -615,7 +451,7 @@
                     [nextPointCoords.lat, nextPointCoords.lng]
                 );
 
-                if (distanceToNext < 10) { // 10 meters threshold
+                if (distanceToNext < 10) {
                     currentRouteIndex++;
                     updateStatusIndicator('Reached waypoint - Moving to next');
                 }
@@ -715,7 +551,6 @@
             panel.innerHTML = `${icon} ${instruction}`;
         }
 
-        // Utility functions
         function calculateDistance(point1, point2) {
             const R = 6371e3; // Earth's radius in meters
             const φ1 = point1[0] * Math.PI/180;
@@ -742,12 +577,6 @@
             return (Math.atan2(y, x) * 180/Math.PI + 360) % 360;
         }
 
-        function recenterMap() {
-            if (userLocation) {
-                map.setView(userLocation, 18);
-            }
-        }
-
         // Device orientation handling
         function initializeDeviceOrientation() {
             if (window.DeviceOrientationEvent) {
@@ -771,7 +600,6 @@
 
         function handleDeviceOrientation(event) {
             const previousHeading = deviceCompassHeading;
-            
             // Handle different device orientations
             if (event.webkitCompassHeading !== undefined) {
                 // iOS devices
@@ -801,11 +629,13 @@
         // Handle page visibility changes
         document.addEventListener('visibilitychange', () => {
             if (document.hidden) {
+                // Pause updates when page is hidden
                 if (watchId) {
                     navigator.geolocation.clearWatch(watchId);
                     watchId = null;
                 }
             } else {
+                // Resume updates when page is visible again
                 startLocationTracking();
             }
         });
