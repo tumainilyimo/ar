@@ -1,321 +1,326 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-  <title>AR Navigation</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>AR Navigation</title>
 
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@latest/dist/leaflet-routing-machine.css"/>
-  <script src="https://unpkg.com/leaflet-routing-machine@latest/dist/leaflet-routing-machine.js"></script>
-  <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
-  <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@latest/dist/leaflet-routing-machine.css"/>
+    <script src="https://unpkg.com/leaflet-routing-machine@latest/dist/leaflet-routing-machine.js"></script>
+    <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
+    <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
 
-  <style>
-    body { 
-      margin: 0; 
-      padding: 0;
-      overflow: hidden;
-      position: fixed;
-      width: 100%;
-      height: 100%;
-    }
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+        }
 
-    #camera-view {
-      position: absolute;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 60%;
-      z-index: 1;
-    }
+        .arjs-loader {
+            position: fixed;
+            z-index: 999;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+        }
 
-    #map-view {
-      position: absolute;
-      bottom: 0;
-      left: 0;
-      width: 100%;
-      height: 40%;
-      z-index: 2;
-    }
+        .camera-view {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 60%;
+            z-index: 1;
+        }
 
-    #map {
-      width: 100%;
-      height: 100%;
-    }
+        .map-view {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 40%;
+            z-index: 2;
+        }
 
-    .controls {
-      position: fixed;
-      top: 20px;
-      left: 50%;
-      transform: translateX(-50%);
-      z-index: 1000;
-      display: flex;
-      gap: 10px;
-      background: rgba(255,255,255,0.9);
-      padding: 10px;
-      border-radius: 8px;
-    }
+        #map { 
+            width: 100%;
+            height: 100%;
+        }
 
-    .controls input {
-      padding: 8px;
-      border: 1px solid #ccc;
-      border-radius: 4px;
-      width: 150px;
-    }
+        .controls {
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 3;
+            display: flex;
+            gap: 10px;
+            background: rgba(255,255,255,0.9);
+            padding: 10px;
+            border-radius: 8px;
+        }
 
-    .controls button {
-      padding: 8px 16px;
-      background: #2196F3;
-      color: white;
-      border: none;
-      border-radius: 4px;
-      cursor: pointer;
-    }
+        input {
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            width: 140px;
+        }
 
-    #direction-panel {
-      position: fixed;
-      bottom: 45%;
-      left: 50%;
-      transform: translateX(-50%);
-      background: rgba(0,0,0,0.8);
-      color: white;
-      padding: 10px 20px;
-      border-radius: 20px;
-      z-index: 1000;
-    }
+        button {
+            padding: 8px 16px;
+            background: #2196F3;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
 
-    .instructions {
-      position: absolute;
-      right: 0;
-      top: 0;
-      width: 250px;
-      height: 100%;
-      background: rgba(255,255,255,0.9);
-      overflow-y: auto;
-      padding: 10px;
-      font-size: 14px;
-    }
-  </style>
+        .direction-indicator {
+            position: fixed;
+            bottom: 42%;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0,0,0,0.8);
+            color: white;
+            padding: 10px 20px;
+            border-radius: 20px;
+            z-index: 3;
+            font-family: Arial, sans-serif;
+        }
+
+        a-scene {
+            width: 100%;
+            height: 100%;
+        }
+    </style>
 </head>
 <body>
-  <!-- Camera View with AR -->
-  <div id="camera-view">
-    <a-scene 
-      embedded
-      arjs='sourceType: webcam; debugUIEnabled: false; detectionMode: mono_and_matrix; matrixCodeType: 3x3;'
-      vr-mode-ui="enabled: false"
-    >
-      <a-camera gps-projected-camera rotation-reader></a-camera>
-      <a-entity id="route-markers"></a-entity>
-    </a-scene>
-    
-    <div class="controls">
-      <input type="text" id="start-input" placeholder="Start location">
-      <input type="text" id="end-input" placeholder="End location">
-      <button onclick="calculateRoute()">Route</button>
+    <div class="camera-view">
+        <a-scene 
+            embedded
+            vr-mode-ui="enabled: false"
+            arjs='sourceType: webcam; videoTexture: true; debugUIEnabled: false; detectionMode: mono;'
+        >
+            <a-camera gps-camera rotation-reader></a-camera>
+            <a-entity id="route-markers"></a-entity>
+        </a-scene>
     </div>
 
-    <div id="direction-panel"></div>
-  </div>
+    <div class="map-view">
+        <div id="map"></div>
+    </div>
 
-  <!-- Map View -->
-  <div id="map-view">
-    <div id="map"></div>
-    <div class="instructions" id="instructions"></div>
-  </div>
+    <div class="controls">
+        <input type="text" id="start" placeholder="Start location">
+        <input type="text" id="end" placeholder="End location">
+        <button onclick="calculateRoute()">Route</button>
+    </div>
 
-  <script>
-    let map, userMarker, routingControl;
-    let userLocation = null;
-    let routePoints = [];
+    <div id="direction-panel" class="direction-indicator"></div>
 
-    // Initialize on page load
-    window.onload = async () => {
-      try {
-        const pos = await getCurrentPosition();
-        userLocation = [pos.coords.latitude, pos.coords.longitude];
-        initializeMap();
-        startLocationWatch();
-      } catch (error) {
-        console.error('Location error:', error);
-        userLocation = [-3.3667, 36.6833]; // Arusha fallback
-        initializeMap();
-      }
-    };
+    <script>
+        let map, userMarker, routingControl;
+        let userLocation = null;
+        let routePoints = [];
+        const ARROW_HEIGHT = 10;
+        const ARROW_SCALE = "5 5 5";
+        const MIN_DISTANCE = 20;
 
-    function getCurrentPosition() {
-      return new Promise((resolve, reject) => {
-        navigator.geolocation.getCurrentPosition(resolve, reject, {
-          enableHighAccuracy: true,
-          timeout: 30000,
-          maximumAge: 0
-        });
-      });
-    }
+        window.onload = async () => {
+            try {
+                const pos = await getCurrentPosition();
+                userLocation = [pos.coords.latitude, pos.coords.longitude];
+                initMap();
+                startLocationTracking();
+            } catch (error) {
+                console.error('Location error:', error);
+                alert('Please enable GPS location');
+            }
+        };
 
-    function initializeMap() {
-      map = L.map('map').setView(userLocation, 13);
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
-      userMarker = L.marker(userLocation).addTo(map);
-    }
-
-    function startLocationWatch() {
-      navigator.geolocation.watchPosition(
-        position => {
-          userLocation = [position.coords.latitude, position.coords.longitude];
-          userMarker.setLatLng(userLocation);
-          updateARNavigation();
-        },
-        error => console.error('Watch position error:', error),
-        { enableHighAccuracy: true }
-      );
-    }
-
-    async function calculateRoute() {
-      const start = document.getElementById('start-input').value;
-      const end = document.getElementById('end-input').value;
-
-      if (!start || !end) {
-        alert('Please enter both locations');
-        return;
-      }
-
-      try {
-        const startCoords = await geocodeLocation(start);
-        const endCoords = await geocodeLocation(end);
-        
-        if (!startCoords || !endCoords) {
-          alert('Location not found');
-          return;
+        function getCurrentPosition() {
+            return new Promise((resolve, reject) => {
+                navigator.geolocation.getCurrentPosition(resolve, reject, {
+                    enableHighAccuracy: true,
+                    timeout: 5000,
+                    maximumAge: 0
+                });
+            });
         }
 
-        if (routingControl) {
-          map.removeControl(routingControl);
+        function initMap() {
+            map = L.map('map').setView(userLocation, 15);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+            userMarker = L.marker(userLocation).addTo(map);
         }
 
-        routingControl = L.Routing.control({
-          waypoints: [
-            L.latLng(startCoords[0], startCoords[1]),
-            L.latLng(endCoords[0], endCoords[1])
-          ],
-          routeWhileDragging: false,
-          createMarker: () => null
-        }).addTo(map);
+        function startLocationTracking() {
+            navigator.geolocation.watchPosition(
+                pos => {
+                    userLocation = [pos.coords.latitude, pos.coords.longitude];
+                    userMarker.setLatLng(userLocation);
+                    updateNavigation();
+                },
+                error => console.error('Watch error:', error),
+                { enableHighAccuracy: true }
+            );
+        }
 
-        routingControl.on('routesfound', event => {
-          const route = event.routes[0];
-          routePoints = route.coordinates;
-          
-          // Update instructions
-          document.getElementById('instructions').innerHTML = 
-            route.instructions.map(instruction => 
-              `<div style="padding: 8px 0; border-bottom: 1px solid #eee;">
-                ${instruction.text} (${instruction.distance}m)
-               </div>`
-            ).join('');
+        async function calculateRoute() {
+            const start = document.getElementById('start').value;
+            const end = document.getElementById('end').value;
 
-          // Fit map to route
-          map.fitBounds(L.latLngBounds(route.coordinates), { padding: [50, 50] });
-          
-          createARMarkers();
-        });
-      } catch (error) {
-        console.error('Route calculation error:', error);
-        alert('Error calculating route');
-      }
-    }
+            if (!start || !end) {
+                alert('Enter both locations');
+                return;
+            }
 
-    async function geocodeLocation(address) {
-      try {
-        const response = await fetch(
-          `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address)}`
-        );
-        const data = await response.json();
-        return data.length ? [parseFloat(data[0].lat), parseFloat(data[0].lon)] : null;
-      } catch (error) {
-        console.error('Geocoding error:', error);
-        return null;
-      }
-    }
+            try {
+                const startCoords = await geocode(start);
+                const endCoords = await geocode(end);
 
-    function createARMarkers() {
-      const container = document.getElementById('route-markers');
-      container.innerHTML = '';
+                if (!startCoords || !endCoords) {
+                    alert('Location not found');
+                    return;
+                }
 
-      routePoints.forEach((point, index) => {
-        if (index % 5 !== 0) return; // Place marker every 5th point
+                createRoute(startCoords, endCoords);
+            } catch (error) {
+                console.error('Route error:', error);
+                alert('Route calculation failed');
+            }
+        }
 
-        const marker = document.createElement('a-sphere');
-        marker.setAttribute('gps-projected-entity-place', {
-          latitude: point.lat,
-          longitude: point.lng
-        });
-        marker.setAttribute('radius', '1');
-        marker.setAttribute('color', '#2196F3');
-        marker.setAttribute('position', '0 2 0');
+        async function geocode(location) {
+            const response = await fetch(
+                `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(location)}`
+            );
+            const data = await response.json();
+            return data.length ? [parseFloat(data[0].lat), parseFloat(data[0].lon)] : null;
+        }
 
-        const text = document.createElement('a-text');
-        text.setAttribute('value', `${Math.round(index/5 + 1)}`);
-        text.setAttribute('look-at', '[gps-projected-camera]');
-        text.setAttribute('scale', '5 5 5');
-        text.setAttribute('align', 'center');
-        text.setAttribute('position', '0 2 0');
+        function createRoute(start, end) {
+            if (routingControl) {
+                map.removeControl(routingControl);
+            }
 
-        container.appendChild(marker);
-        container.appendChild(text);
-      });
-    }
+            routingControl = L.Routing.control({
+                waypoints: [
+                    L.latLng(start[0], start[1]),
+                    L.latLng(end[0], end[1])
+                ],
+                routeWhileDragging: false,
+                addWaypoints: false,
+                createMarker: () => null
+            }).addTo(map);
 
-    function updateARNavigation() {
-      if (!routePoints.length || !userLocation) return;
+            routingControl.on('routesfound', event => {
+                routePoints = event.routes[0].coordinates;
+                map.fitBounds(L.latLngBounds(routePoints), { padding: [50, 50] });
+                createARDirections();
+            });
+        }
 
-      const nextPoint = findNextRoutePoint();
-      if (!nextPoint) return;
+        function createARDirections() {
+            const routeMarkers = document.getElementById('route-markers');
+            routeMarkers.innerHTML = '';
 
-      const bearing = calculateBearing(userLocation, [nextPoint.lat, nextPoint.lng]);
-      const distance = calculateDistance(userLocation, [nextPoint.lat, nextPoint.lng]);
+            routePoints.forEach((point, index) => {
+                if (index % 10 === 0) {
+                    const entity = document.createElement('a-entity');
+                    entity.setAttribute('gps-entity-place', `latitude: ${point.lat}; longitude: ${point.lng}`);
+                    
+                    const arrow = document.createElement('a-cone');
+                    arrow.setAttribute('color', '#4285f4');
+                    arrow.setAttribute('height', ARROW_HEIGHT);
+                    arrow.setAttribute('radius-bottom', '2');
+                    arrow.setAttribute('position', `0 ${ARROW_HEIGHT/2} 0`);
+                    arrow.setAttribute('scale', ARROW_SCALE);
 
-      document.getElementById('direction-panel').textContent = 
-        `${Math.round(bearing)}° - ${Math.round(distance)}m`;
-    }
+                    const label = document.createElement('a-text');
+                    label.setAttribute('value', `${Math.round(index/10 + 1)}`);
+                    label.setAttribute('align', 'center');
+                    label.setAttribute('position', `0 ${ARROW_HEIGHT + 2} 0`);
+                    label.setAttribute('scale', '5 5 5');
+                    label.setAttribute('color', 'white');
+                    label.setAttribute('look-at', '[gps-camera]');
 
-    function findNextRoutePoint() {
-      return routePoints.reduce((nearest, point) => {
-        const distance = calculateDistance(
-          userLocation, 
-          [point.lat, point.lng]
-        );
-        return distance < nearest.distance ? {point, distance} : nearest;
-      }, {point: null, distance: Infinity}).point;
-    }
+                    entity.appendChild(arrow);
+                    entity.appendChild(label);
+                    routeMarkers.appendChild(entity);
+                }
+            });
+        }
 
-    function calculateDistance(point1, point2) {
-      const R = 6371e3;
-      const φ1 = point1[0] * Math.PI/180;
-      const φ2 = point2[0] * Math.PI/180;
-      const Δφ = (point2[0] - point1[0]) * Math.PI/180;
-      const Δλ = (point2[1] - point1[1]) * Math.PI/180;
+        function updateNavigation() {
+            if (!routePoints.length || !userLocation) return;
 
-      const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
-                Math.cos(φ1) * Math.cos(φ2) *
-                Math.sin(Δλ/2) * Math.sin(Δλ/2);
-      
-      return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-    }
+            const nextPoint = findNextPoint();
+            if (!nextPoint) return;
 
-    function calculateBearing(point1, point2) {
-      const φ1 = point1[0] * Math.PI/180;
-      const φ2 = point2[0] * Math.PI/180;
-      const Δλ = (point2[1] - point1[1]) * Math.PI/180;
+            const bearing = calculateBearing(
+                userLocation[0], userLocation[1],
+                nextPoint.lat, nextPoint.lng
+            );
 
-      const y = Math.sin(Δλ) * Math.cos(φ2);
-      const x = Math.cos(φ1) * Math.sin(φ2) -
-                Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ);
+            const distance = calculateDistance(
+                userLocation[0], userLocation[1],
+                nextPoint.lat, nextPoint.lng
+            );
 
-      return (Math.atan2(y, x) * 180/Math.PI + 360) % 360;
-    }
-  </script>
+            if (distance < MIN_DISTANCE) {
+                routePoints = routePoints.slice(1);
+                return;
+            }
+
+            document.getElementById('direction-panel').textContent = 
+                `${Math.round(bearing)}° - ${Math.round(distance)}m`;
+        }
+
+        function findNextPoint() {
+            return routePoints.reduce((nearest, point) => {
+                const dist = calculateDistance(
+                    userLocation[0], userLocation[1],
+                    point.lat, point.lng
+                );
+                return dist < nearest.distance ? {point, distance: dist} : nearest;
+            }, {point: null, distance: Infinity}).point;
+        }
+
+        function calculateDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371e3;
+            const φ1 = lat1 * Math.PI/180;
+            const φ2 = lat2 * Math.PI/180;
+            const Δφ = (lat2-lat1) * Math.PI/180;
+            const Δλ = (lon2-lon1) * Math.PI/180;
+
+            const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
+                     Math.cos(φ1) * Math.cos(φ2) *
+                     Math.sin(Δλ/2) * Math.sin(Δλ/2);
+            
+            return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+        }
+
+        function calculateBearing(lat1, lon1, lat2, lon2) {
+            const φ1 = lat1 * Math.PI/180;
+            const φ2 = lat2 * Math.PI/180;
+            const Δλ = (lon2-lon1) * Math.PI/180;
+
+            const y = Math.sin(Δλ) * Math.cos(φ2);
+            const x = Math.cos(φ1) * Math.sin(φ2) -
+                     Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ);
+
+            return (Math.atan2(y, x) * 180/Math.PI + 360) % 360;
+        }
+    </script>
 </body>
 </html>
