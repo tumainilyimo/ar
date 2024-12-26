@@ -76,17 +76,51 @@
             z-index: 3;
         }
 
-        .ar-arrow {
+        .ar-direction-container {
             position: absolute;
-            top: 50%;
+            top: 30%; /* Adjust vertical position */
             left: 50%;
-            transform: translate(-50%, -50%);
+            transform: translateX(-50%);
+            z-index: 4;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .ar-direction-label {
+            background-color: rgba(0, 123, 255, 0.8); /* Match blue color */
+            color: white;
+            padding: 5px 10px;
+            border-radius: 5px;
+            margin-bottom: 5px;
+        }
+
+        .ar-arrow {
+            display: flex;
+        }
+
+        .ar-arrow-segment {
             width: 0;
             height: 0;
-            border-left: 20px solid transparent;
-            border-right: 20px solid transparent;
-            border-bottom: 40px solid blue; /* Customize arrow color */
-            z-index: 4;
+            border-top: 15px solid transparent;
+            border-bottom: 15px solid transparent;
+            border-left: 20px solid white; /* White arrow */
+            margin-right: -5px; /* Overlap for connected look */
+        }
+
+        .ar-arrow-background {
+            width: 0;
+            height: 0;
+            border-top: 18px solid transparent;
+            border-bottom: 18px solid transparent;
+            border-left: 25px solid blue; /* Blue background */
+            position: relative;
+            z-index: -1;
+        }
+
+        .ar-emoji {
+            font-size: 2em;
+            margin-top: 5px;
         }
     </style>
 </head>
@@ -94,14 +128,18 @@
     <div class="camera-view">
         <a-scene embedded vr-mode-ui="enabled: false" arjs="sourceType: webcam; debugUIEnabled: false; detectionMode: mono_and_matrix; matrixCodeType: 3x3_HAMMING63">
             <a-camera gps-camera rotation-reader look-controls-enabled="false"></a-camera>
-            <a-entity id="ar-arrow-container">
-                <a-entity id="ar-arrow" rotation="0 0 0">
-                    <a-entity gltf-model="#arrowModel" scale="0.5 0.5 0.5" rotation="-90 0 0" color="blue"></a-entity>
+            <a-entity id="ar-direction-indicator" class="ar-direction-container" visible="false">
+                <a-entity class="ar-direction-label" text="value: Davis St; align: center"></a-entity>
+                <a-entity class="ar-arrow">
+                    <a-entity class="ar-arrow-background"></a-entity>
+                    <a-entity class="ar-arrow-segment"></a-entity>
+                    <a-entity class="ar-arrow-background"></a-entity>
+                    <a-entity class="ar-arrow-segment"></a-entity>
+                    <a-entity class="ar-arrow-background"></a-entity>
+                    <a-entity class="ar-arrow-segment"></a-entity>
                 </a-entity>
+                <a-entity id="ar-emoji-indicator" class="ar-emoji"></a-entity>
             </a-entity>
-            <a-assets>
-                <a-asset-item id="arrowModel" src="https://cdn.aframe.io/examples/assets/models/arrow.gltf"></a-asset-item>
-            </a-assets>
         </a-scene>
     </div>
 
@@ -236,46 +274,44 @@
             document.getElementById('direction-panel').textContent =
                 `${Math.round(bearing)}° - ${Math.round(distance)}m`;
 
-            updateARArrow(nextPoint.lat, nextPoint.lng);
+            updateARDirection(nextPoint.lat, nextPoint.lng);
         }
 
-        function updateARArrow(nextLatitude, nextLongitude) {
-            const arrowContainer = document.getElementById('ar-arrow-container');
-            arrowContainer.setAttribute('gps-entity-place', `latitude: ${nextLatitude}; longitude: ${nextLongitude}`);
+        function updateARDirection(nextLatitude, nextLongitude) {
+            const arContainer = document.getElementById('ar-direction-indicator');
+            arContainer.setAttribute('gps-entity-place', `latitude: ${nextLatitude}; longitude: ${nextLongitude}`);
+            arContainer.setAttribute('visible', 'true');
 
-            const userDirection = calculateDeviceBearing(); // Get device's heading
+            const userDirection = getDeviceBearing();
             if (userDirection !== null) {
-                // Calculate the bearing from the user's location to the next point
                 const bearingToNextPoint = calculateBearing(userLocation[0], userLocation[1], nextLatitude, nextLongitude);
-
-                // Calculate the difference between the bearing to the next point and the device's heading
-                let arrowRotation = bearingToNextPoint - userDirection;
-
-                // Normalize the rotation to be within 0-360 degrees
-                if (arrowRotation < 0) {
-                    arrowRotation += 360;
+                let arRotation = bearingToNextPoint - userDirection;
+                if (arRotation < 0) {
+                    arRotation += 360;
                 }
+                arContainer.setAttribute('rotation', `0 ${arRotation} 0`);
 
-                const arArrow = document.getElementById('ar-arrow');
-                arArrow.setAttribute('rotation', `0 ${arrowRotation} 0`);
+                // Example of emoji guidance based on distance (can be expanded)
+                const distanceToNextPoint = calculateDistance(userLocation, [nextLatitude, nextLongitude]);
+                let emoji = '';
+                if (distanceToNextPoint < 20) {
+                    emoji = '🎯'; // Very close
+                } else if (distanceToNextPoint < 50) {
+                    emoji = '🚶'; // Keep going
+                } else {
+                    emoji = '🧭'; // General direction
+                }
+                document.getElementById('ar-emoji-indicator').setAttribute('text', `value: ${emoji}`);
             }
         }
 
-        function calculateDeviceBearing() {
-            // This function needs to handle device orientation events to get the compass heading.
-            // It's platform-dependent and might require specific browser API handling.
-            // For simplicity, we'll leave a basic implementation here that might need adjustments.
-            if (window.DeviceOrientationEvent) {
-                window.addEventListener('deviceorientation', function(event) {
-                    let compassHeading = event.webkitCompassHeading || Math.abs(event.alpha - 360);
-                    // You might need to adjust the offset and accuracy based on your device.
-                    return compassHeading;
-                });
-            } else {
-                console.warn('Device orientation not supported');
-                return null;
-            }
-            return null; // Return null if device orientation is not available immediately.
+        let deviceCompassHeading = null;
+        window.addEventListener('deviceorientation', function(event) {
+            deviceCompassHeading = event.webkitCompassHeading || Math.abs(event.alpha - 360);
+        });
+
+        function getDeviceBearing() {
+            return deviceCompassHeading;
         }
 
         function findNextPoint() {
