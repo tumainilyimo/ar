@@ -85,7 +85,7 @@
       border-radius: 5px;
     }
     .controls input {
-      width: 100px;
+      width: 180px;
       padding: 5px;
     }
     .controls button {
@@ -126,80 +126,118 @@
     <div id="map"></div>
   </div>
 
-  <!-- Controls for Start/End + Routing -->
+  <!-- Controls: Destination + Routing button -->
   <div class="controls">
-    <input id="startLat" type="text" placeholder="Start Lat" />
-    <input id="startLng" type="text" placeholder="Start Lng" />
-    <input id="endLat" type="text" placeholder="End Lat" />
-    <input id="endLng" type="text" placeholder="End Lng" />
+    <input id="destinationInput" type="text" placeholder="Enter destination..." />
     <button id="routeBtn">Route</button>
   </div>
 
   <script>
-    let map, userMarker, routeControl;
+    let map, userLocationMarker, routeControl;
     let routeCoords = [];
+    let userLocation = null; // Will store [lat, lng]
 
-    // 1. Initialize the Leaflet map
-    async function initMap() {
-      // If user’s current position is available, center map there
-      const pos = await getPosition();
-      const userLocation = [pos.coords.latitude, pos.coords.longitude];
+    // 1. On page load, get user location and init the Leaflet map
+    window.addEventListener('load', async () => {
+      try {
+        const position = await getPosition();
+        userLocation = [position.coords.latitude, position.coords.longitude];
+      } catch (err) {
+        console.error('Geolocation error:', err);
+        alert('Unable to get your location. Please enable GPS.');
+        // Fallback to some default if needed:
+        userLocation = [0, 0];
+      }
 
-      map = L.map('map').setView(userLocation, 17);
+      initMap();
+
+      // Listen for Route button
+      document.getElementById('routeBtn').addEventListener('click', onRouteBtnClick);
+    });
+
+    // 2. Initialize the Leaflet map centered on user location
+    function initMap() {
+      map = L.map('map').setView(userLocation, 15);
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 
       // Show a marker for the user
-      userMarker = L.marker(userLocation).addTo(map);
+      userLocationMarker = L.marker(userLocation).addTo(map);
 
       // Continuously update userMarker with new location
       navigator.geolocation.watchPosition(
         (pos) => {
-          const latlng = [pos.coords.latitude, pos.coords.longitude];
-          userMarker.setLatLng(latlng);
+          userLocation = [pos.coords.latitude, pos.coords.longitude];
+          userLocationMarker.setLatLng(userLocation);
         },
         console.error,
         { enableHighAccuracy: true }
       );
     }
 
-    // 2. On Route button click: set route from Start -> End
-    function onRouteBtnClick() {
-      const startLat = parseFloat(document.getElementById('startLat').value);
-      const startLng = parseFloat(document.getElementById('startLng').value);
-      const endLat   = parseFloat(document.getElementById('endLat').value);
-      const endLng   = parseFloat(document.getElementById('endLng').value);
-
-      if (isNaN(startLat) || isNaN(startLng) || isNaN(endLat) || isNaN(endLng)) {
-        alert('Please enter valid latitude/longitude values');
+    // 3. On Route button click
+    async function onRouteBtnClick() {
+      const destName = document.getElementById('destinationInput').value.trim();
+      if (!destName) {
+        alert('Please enter a destination.');
         return;
       }
 
-      // Clear old route + AR markers
-      clearOldRoute();
+      try {
+        // 3a. Geocode the destination name -> lat/lng
+        const destLatLng = await geocodeAddress(destName);
+        if (!destLatLng) {
+          alert('Could not find location: ' + destName);
+          return;
+        }
 
-      // Leaflet Routing Machine
-      routeControl = L.Routing.control({
-        waypoints: [
-          L.latLng(startLat, startLng),
-          L.latLng(endLat, endLng)
-        ],
-        createMarker: () => null, // Hide default markers
-        showAlternatives: false
-      })
-      .on('routesfound', (evt) => {
-        // Save the route coordinates to use for AR arrows
-        routeCoords = evt.routes[0].coordinates;
-        console.log('Route coords:', routeCoords);
-        // Create AR arrows
-        createARArrows();
-      })
-      .addTo(map);
+        // Clear old route + AR markers
+        clearOldRoute();
 
-      // Center map on start
-      map.setView([startLat, startLng], 17);
+        // 3b. Build route: from userLocation -> destLatLng
+        routeControl = L.Routing.control({
+          waypoints: [
+            L.latLng(userLocation[0], userLocation[1]),
+            L.latLng(destLatLng.lat, destLatLng.lng)
+          ],
+          createMarker: () => null, // Hide default markers
+          showAlternatives: false
+        })
+        .on('routesfound', (evt) => {
+          routeCoords = evt.routes[0].coordinates;
+          console.log('Route coords:', routeCoords);
+          createARArrows();
+        })
+        .addTo(map);
+
+        // Center map on destination
+        map.setView([destLatLng.lat, destLatLng.lng], 14);
+      } catch (err) {
+        console.error('Routing error:', err);
+        alert('Error computing route. Check console for details.');
+      }
     }
 
-    // 3. Create AR arrow markers along the route
+    // 4. Geocode using OpenStreetMap Nominatim
+    async function geocodeAddress(address) {
+      const url = 'https://nominatim.openstreetmap.org/search?format=json&q=' 
+                  + encodeURIComponent(address);
+      try {
+        const resp = await fetch(url);
+        const data = await resp.json();
+        if (data && data.length > 0) {
+          // Use the first result
+          return {
+            lat: parseFloat(data[0].lat),
+            lng: parseFloat(data[0].lon)
+          };
+        }
+      } catch (err) {
+        console.error('Geocoding error:', err);
+      }
+      return null;
+    }
+
+    // 5. Create AR arrow markers along the route
     function createARArrows() {
       const container = document.getElementById('routeMarkersContainer');
 
@@ -208,10 +246,12 @@
         container.removeChild(container.firstChild);
       }
 
+      // Loop each segment
       for (let i = 0; i < routeCoords.length - 1; i++) {
         const current = routeCoords[i];
         const next = routeCoords[i + 1];
 
+        // Bearing from current->next
         const bearing = getBearing(current.lat, current.lng, next.lat, next.lng);
 
         const arrowEntity = document.createElement('a-entity');
@@ -221,12 +261,12 @@
         );
         arrowEntity.setAttribute('scale', '0.2 0.2 0.2');
         arrowEntity.setAttribute('position', '0 1 0'); // 1 meter above ground
-        // Rotate the cone so its tip points forward
+        // Rotate so cone tip points forward
         arrowEntity.setAttribute('rotation', `-90 ${bearing} 0`);
         arrowEntity.setAttribute('geometry', 'primitive: cone; height: 1; radiusBottom: 0.3');
         arrowEntity.setAttribute('material', 'color: #3498db');
 
-        // Optional label on top
+        // Optional label
         const label = document.createElement('a-text');
         label.setAttribute('value', `Step ${i + 1}`);
         label.setAttribute('align', 'center');
@@ -239,7 +279,7 @@
       }
     }
 
-    // Helper: clear old route from map + AR markers
+    // Helper: Clear old route + AR markers
     function clearOldRoute() {
       if (routeControl) {
         map.removeControl(routeControl);
@@ -252,7 +292,7 @@
       routeCoords = [];
     }
 
-    // Helper: get user position as a Promise
+    // Helper: get user location (promise wrapper)
     function getPosition() {
       return new Promise((resolve, reject) => {
         navigator.geolocation.getCurrentPosition(resolve, reject, {
@@ -279,12 +319,6 @@
       brng = brng * (180 / Math.PI);
       return (brng + 360) % 360;
     }
-
-    // On page load, init map; set up button handler
-    window.addEventListener('load', () => {
-      initMap().catch((err) => console.error('Map init error:', err));
-      document.getElementById('routeBtn').addEventListener('click', onRouteBtnClick);
-    });
   </script>
 </body>
 </html>
