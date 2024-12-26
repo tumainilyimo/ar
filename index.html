@@ -1,10 +1,10 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
+  <meta charset="UTF-8" />
   <!-- For mobile-friendly scaling -->
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-  <title>AR Step-by-Step Guidance with Fixed Arrow</title>
+  <title>AR Navigation Demo</title>
 
   <!-- Leaflet CSS & JS -->
   <link 
@@ -35,193 +35,224 @@
       font-family: sans-serif;
       /* Make sure taps work on mobile */
       touch-action: pan-y;
+      overflow: hidden; /* to avoid scroll bars */
     }
 
-    /* Map container */
-    #map {
+    /* Container for the top AR view (camera). */
+    .ar-view {
       position: absolute;
       top: 0;
       left: 0;
       width: 100%;
-      height: 100vh;
+      height: 60vh;
+      z-index: 2;
+      background: #000; /* fallback background */
+    }
+
+    /* The A-Frame AR scene will fill this container. */
+    a-scene {
+      width: 100%;
+      height: 100%;
+    }
+
+    /* Container for the bottom map view. */
+    .map-container {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      width: 100%;
+      height: 40vh;
       z-index: 1;
     }
 
-    /* Button to start AR */
-    #startARBtn {
-      position: fixed;
-      bottom: 20px;
+    #map {
+      width: 100%;
+      height: 100%;
+    }
+
+    /* Input and button container. */
+    .controls {
+      position: absolute;
+      top: 10px;
       left: 50%;
       transform: translateX(-50%);
       z-index: 9999;
-      padding: 10px 20px;
-      background: #4CAF50;
-      color: #fff;
-      border: none;
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      background: rgba(255,255,255,0.8);
+      padding: 5px 10px;
       border-radius: 5px;
-      display: none; /* Appears after route is set */
+    }
+    .controls input {
+      width: 100px;
+      padding: 5px;
+    }
+    .controls button {
+      padding: 5px 10px;
+      background: #007bff;
+      border: none;
+      color: #fff;
+      border-radius: 5px;
       cursor: pointer;
     }
-
-    /* AR scene hidden by default (shown when "Start AR" is clicked) */
-    a-scene {
-      display: none;
-      position: absolute;
-      top: 0;
-      left: 0;
-      width: 100%; 
-      height: 100%;
-      z-index: 1000;
+    .controls button:hover {
+      background: #0056b3;
     }
   </style>
 </head>
 <body>
-  <div id="map"></div>
-  <button id="startARBtn">Start AR Guidance</button>
+  <!-- TOP AR VIEW -->
+  <div class="ar-view">
+    <a-scene
+      embedded
+      vr-mode-ui="enabled: false"
+      arjs="sourceType: webcam; debugUIEnabled: false; trackingMethod: best;"
+    >
+      <!-- GPS + rotation camera -->
+      <a-camera
+        gps-camera
+        rotation-reader
+        look-controls-enabled="false"
+      ></a-camera>
 
-  <!-- AR Scene -->
-  <a-scene
-    embedded
-    vr-mode-ui="enabled: false"
-    arjs="sourceType: webcam; debugUIEnabled: false; trackingMethod: best;"
-  >
-    <!-- GPS + rotation camera -->
-    <a-camera
-      gps-camera
-      rotation-reader
-      look-controls-enabled="false">
-    </a-camera>
+      <!-- Container for AR route markers -->
+      <a-entity id="routeMarkersContainer"></a-entity>
+    </a-scene>
+  </div>
 
-    <!-- Container for AR arrows -->
-    <a-entity id="routeMarkersContainer"></a-entity>
-  </a-scene>
+  <!-- BOTTOM MAP VIEW -->
+  <div class="map-container">
+    <div id="map"></div>
+  </div>
+
+  <!-- Controls for Start/End + Routing -->
+  <div class="controls">
+    <input id="startLat" type="text" placeholder="Start Lat" />
+    <input id="startLng" type="text" placeholder="Start Lng" />
+    <input id="endLat" type="text" placeholder="End Lat" />
+    <input id="endLng" type="text" placeholder="End Lng" />
+    <button id="routeBtn">Route</button>
+  </div>
 
   <script>
     let map, userMarker, routeControl;
-    let userLocation = null;
-    let destinationMarker = null;
     let routeCoords = [];
 
-    // 1. Initialize map + user location
+    // 1. Initialize the Leaflet map
     async function initMap() {
+      // If user’s current position is available, center map there
       const pos = await getPosition();
-      userLocation = [pos.coords.latitude, pos.coords.longitude];
+      const userLocation = [pos.coords.latitude, pos.coords.longitude];
 
-      // Create Leaflet map
       map = L.map('map').setView(userLocation, 17);
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 
-      // User marker
+      // Show a marker for the user
       userMarker = L.marker(userLocation).addTo(map);
 
-      // Watch position changes
+      // Continuously update userMarker with new location
       navigator.geolocation.watchPosition(
         (pos) => {
-          userLocation = [pos.coords.latitude, pos.coords.longitude];
-          if (userMarker) userMarker.setLatLng(userLocation);
+          const latlng = [pos.coords.latitude, pos.coords.longitude];
+          userMarker.setLatLng(latlng);
         },
         console.error,
         { enableHighAccuracy: true }
       );
-
-      // Tap on map to set destination
-      map.on('click', onMapClick);
     }
 
-    // 2. Map click -> set destination, compute route
-    function onMapClick(e) {
-      if (destinationMarker) map.removeLayer(destinationMarker);
-      if (routeControl) map.removeControl(routeControl);
+    // 2. On Route button click: set route from Start -> End
+    function onRouteBtnClick() {
+      const startLat = parseFloat(document.getElementById('startLat').value);
+      const startLng = parseFloat(document.getElementById('startLng').value);
+      const endLat   = parseFloat(document.getElementById('endLat').value);
+      const endLng   = parseFloat(document.getElementById('endLng').value);
 
-      destinationMarker = L.marker(e.latlng).addTo(map);
+      if (isNaN(startLat) || isNaN(startLng) || isNaN(endLat) || isNaN(endLng)) {
+        alert('Please enter valid latitude/longitude values');
+        return;
+      }
 
-      // Build route with Leaflet Routing Machine
+      // Clear old route + AR markers
+      clearOldRoute();
+
+      // Leaflet Routing Machine
       routeControl = L.Routing.control({
         waypoints: [
-          L.latLng(userLocation[0], userLocation[1]),
-          L.latLng(e.latlng.lat, e.latlng.lng)
+          L.latLng(startLat, startLng),
+          L.latLng(endLat, endLng)
         ],
-        createMarker: () => null, // no default markers
+        createMarker: () => null, // Hide default markers
         showAlternatives: false
       })
       .on('routesfound', (evt) => {
-        routeCoords = evt.routes[0].coordinates; 
+        // Save the route coordinates to use for AR arrows
+        routeCoords = evt.routes[0].coordinates;
         console.log('Route coords:', routeCoords);
+        // Create AR arrows
+        createARArrows();
       })
       .addTo(map);
 
-      // Show AR button
-      document.getElementById('startARBtn').style.display = 'block';
+      // Center map on start
+      map.setView([startLat, startLng], 17);
     }
 
-    // 3. Start AR: hide map, show AR scene, create arrows
-    function startAR() {
-      document.getElementById('map').style.display = 'none';
-      document.querySelector('a-scene').style.display = 'block';
-
-      // Clear previous AR markers
+    // 3. Create AR arrow markers along the route
+    function createARArrows() {
       const container = document.getElementById('routeMarkersContainer');
+
+      // Clear any existing arrows
       while (container.firstChild) {
         container.removeChild(container.firstChild);
       }
 
-      // Loop through route coords
       for (let i = 0; i < routeCoords.length - 1; i++) {
         const current = routeCoords[i];
-        const next = routeCoords[i+1];
+        const next = routeCoords[i + 1];
 
-        // Calculate bearing from current -> next
         const bearing = getBearing(current.lat, current.lng, next.lat, next.lng);
 
-        // Create AR entity for the arrow
         const arrowEntity = document.createElement('a-entity');
-
-        // Place it at current lat/lng
-        arrowEntity.setAttribute('gps-entity-place', `latitude: ${current.lat}; longitude: ${current.lng}`);
-
-        // Scale it down so it's not huge
+        arrowEntity.setAttribute(
+          'gps-entity-place',
+          `latitude: ${current.lat}; longitude: ${current.lng}`
+        );
         arrowEntity.setAttribute('scale', '0.2 0.2 0.2');
-
-        // Slightly above ground (1 meter)
-        arrowEntity.setAttribute('position', '0 1 0');
-
-        // Tilt the cone forward (-90 around X) AND rotate it around Y by bearing
+        arrowEntity.setAttribute('position', '0 1 0'); // 1 meter above ground
+        // Rotate the cone so its tip points forward
         arrowEntity.setAttribute('rotation', `-90 ${bearing} 0`);
-
-        // Add geometry for the arrow (a cone)
         arrowEntity.setAttribute('geometry', 'primitive: cone; height: 1; radiusBottom: 0.3');
         arrowEntity.setAttribute('material', 'color: #3498db');
 
-        // (Optional) label text
+        // Optional label on top
         const label = document.createElement('a-text');
-        label.setAttribute('value', `Step ${i+1}`);
+        label.setAttribute('value', `Step ${i + 1}`);
         label.setAttribute('align', 'center');
         label.setAttribute('scale', '5 5 5');
-        label.setAttribute('position', '0 1.5 0'); 
-        // Make label face the camera
+        label.setAttribute('position', '0 1.5 0');
         label.setAttribute('look-at', '[gps-camera]');
         arrowEntity.appendChild(label);
 
-        // Add arrow to container
         container.appendChild(arrowEntity);
       }
     }
 
-    // Bearing helper: returns direction from lat1/lng1 -> lat2/lng2 in degrees
-    function getBearing(lat1, lon1, lat2, lon2) {
-      const rad = Math.PI / 180;
-      const φ1 = lat1 * rad;
-      const φ2 = lat2 * rad;
-      const Δλ = (lon2 - lon1) * rad;
-
-      const y = Math.sin(Δλ) * Math.cos(φ2);
-      const x = Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ);
-      let brng = Math.atan2(y, x);
-      brng = brng * (180 / Math.PI);
-      return (brng + 360) % 360;
+    // Helper: clear old route from map + AR markers
+    function clearOldRoute() {
+      if (routeControl) {
+        map.removeControl(routeControl);
+        routeControl = null;
+      }
+      const container = document.getElementById('routeMarkersContainer');
+      while (container.firstChild) {
+        container.removeChild(container.firstChild);
+      }
+      routeCoords = [];
     }
 
-    // Get user position as a Promise
+    // Helper: get user position as a Promise
     function getPosition() {
       return new Promise((resolve, reject) => {
         navigator.geolocation.getCurrentPosition(resolve, reject, {
@@ -232,11 +263,27 @@
       });
     }
 
-    document.getElementById('startARBtn').addEventListener('click', startAR);
+    // Helper: compute bearing in degrees from lat1/lng1 to lat2/lng2
+    function getBearing(lat1, lon1, lat2, lon2) {
+      const rad = Math.PI / 180;
+      const φ1 = lat1 * rad;
+      const φ2 = lat2 * rad;
+      const Δλ = (lon2 - lon1) * rad;
 
-    // Init on load
+      const y = Math.sin(Δλ) * Math.cos(φ2);
+      const x =
+        Math.cos(φ1) * Math.sin(φ2) -
+        Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ);
+
+      let brng = Math.atan2(y, x);
+      brng = brng * (180 / Math.PI);
+      return (brng + 360) % 360;
+    }
+
+    // On page load, init map; set up button handler
     window.addEventListener('load', () => {
-      initMap().catch(err => console.error(err));
+      initMap().catch((err) => console.error('Map init error:', err));
+      document.getElementById('routeBtn').addEventListener('click', onRouteBtnClick);
     });
   </script>
 </body>
