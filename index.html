@@ -5,20 +5,57 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>AR Navigation System</title>
 
-    <!-- External Libraries -->
+    <!-- Preload critical resources -->
+    <link rel="preload" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" as="script">
+    <link rel="preload" href="https://aframe.io/releases/1.4.2/aframe.min.js" as="script">
+
+    <!-- Load stylesheets first -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@latest/dist/leaflet-routing-machine.css"/>
-    <script src="https://unpkg.com/leaflet-routing-machine@latest/dist/leaflet-routing-machine.js"></script>
-    <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
-    <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
+
+    <!-- Load scripts with defer -->
+    <script defer src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script defer src="https://unpkg.com/leaflet-routing-machine@latest/dist/leaflet-routing-machine.js"></script>
+    <script defer src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
+    <script defer src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
 
     <style>
-        body { 
-            margin: 0; 
-            padding: 0; 
-            overflow: hidden; 
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
             font-family: Arial, sans-serif;
+        }
+
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 9999;
+            color: white;
+            font-size: 18px;
+            flex-direction: column;
+        }
+
+        .loading-spinner {
+            border: 5px solid #f3f3f3;
+            border-top: 5px solid #2196F3;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin-bottom: 20px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
         }
 
         .camera-view {
@@ -39,9 +76,9 @@
             z-index: 2;
         }
 
-        #map { 
-            width: 100%; 
-            height: 100%; 
+        #map {
+            width: 100%;
+            height: 100%;
         }
 
         .controls {
@@ -75,10 +112,16 @@
             cursor: pointer;
             font-weight: bold;
             transition: background-color 0.3s;
+            min-width: 100px;
         }
 
         button:hover {
             background: #1976D2;
+        }
+
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
         }
 
         .direction-indicator {
@@ -163,13 +206,29 @@
             font-size: 12px;
             z-index: 1000;
         }
+
+        .distance-marker {
+            position: absolute;
+            background: rgba(255, 255, 255, 0.9);
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            transform: translate(-50%, -150%);
+            white-space: nowrap;
+        }
     </style>
 </head>
 <body>
+    <!-- Loading Overlay -->
+    <div id="loadingOverlay" class="loading-overlay">
+        <div class="loading-spinner"></div>
+        <div id="loadingText">Initializing System...</div>
+    </div>
+
     <!-- AR Camera View -->
     <div class="camera-view">
         <a-scene embedded arjs="sourceType: webcam; debugUIEnabled: false; detectionMode: mono_and_matrix;">
-            <a-camera gps-camera="simulateLatitude: 0; simulateLongitude: 0" rotation-reader></a-camera>
+            <a-camera id="ar-camera" gps-camera rotation-reader></a-camera>
             <a-entity id="navigation-points"></a-entity>
         </a-scene>
     </div>
@@ -189,7 +248,8 @@
     <!-- Controls -->
     <div class="controls">
         <input type="text" id="destination" placeholder="Enter your destination">
-        <button onclick="startNavigation()">Navigate</button>
+        <button id="navButton" onclick="startNavigation()" disabled>Navigate</button>
+        <button id="recenterButton" onclick="recenterMap()" style="display: none;">Recenter</button>
     </div>
 
     <!-- Status and Direction Indicators -->
@@ -210,113 +270,184 @@
         let currentInstruction = '';
         let isWrongDirection = false;
 
-        // Initialize application
-        document.addEventListener('DOMContentLoaded', async () => {
-            try {
-                await initializeAR();
-                await requestPermissions();
-                const position = await getCurrentPosition();
-                userLocation = [position.coords.latitude, position.coords.longitude];
-                initializeMap();
-                startLocationTracking();
-                initializeDeviceOrientation();
-                updateStatusIndicator('Ready to navigate');
-            } catch (error) {
-                console.error('Initialization error:', error);
-                updateStatusIndicator('Error: ' + error.message);
+        // Resource loading tracking
+        let loadingStates = {
+            camera: false,
+            location: false,
+            map: false,
+            orientation: false
+        };
+
+        function updateLoadingText() {
+            const loadingTextElement = document.getElementById('loadingText');
+            const remaining = Object.keys(loadingStates).filter(key => !loadingStates[key]);
+            if (remaining.length > 0) {
+                loadingTextElement.textContent = `Loading: ${remaining.join(', ')}...`;
+            } else {
+                document.getElementById('loadingOverlay').style.display = 'none';
+                document.getElementById('navButton').disabled = false; // Enable navigation once all are loaded
             }
+        }
+
+        // Initialize application
+        document.addEventListener('DOMContentLoaded', () => {
+            initialize();
         });
 
+        async function initialize() {
+            try {
+                await Promise.all([
+                    initializeCamera(),
+                    initializeLocation(),
+                    initializeDeviceOrientation()
+                ]);
+
+                await initializeMap();
+                updateStatusIndicator('Ready to navigate');
+
+            } catch (error) {
+                console.error('Initialization failed:', error);
+                updateStatusIndicator('Initialization failed: ' + error.message);
+            }
+        }
+
         // AR Initialization
-        async function initializeAR() {
-            return new Promise((resolve) => {
+        async function initializeCamera() {
+            return new Promise((resolve, reject) => {
                 const scene = document.querySelector('a-scene');
-                if (scene.hasLoaded) {
+                scene.addEventListener('loaded', () => {
+                    loadingStates.camera = true;
+                    updateLoadingText();
                     resolve();
-                } else {
-                    scene.addEventListener('loaded', resolve);
-                }
+                });
+                scene.addEventListener('error', (error) => {
+                    loadingStates.camera = false;
+                    updateLoadingText();
+                    reject(new Error('Failed to initialize AR camera: ' + error.message));
+                });
+
+                // Fallback in case AR takes too long to load
+                setTimeout(() => {
+                    if (!loadingStates.camera) {
+                        console.warn('AR camera loading timed out.');
+                        loadingStates.camera = true; // Mark as loaded to proceed, but potential issues
+                        updateLoadingText();
+                        resolve();
+                    }
+                }, 10000); // 10 seconds timeout
             });
         }
 
-        // Permission handling
-        async function requestPermissions() {
-            try {
-                const results = await Promise.all([
-                    navigator.permissions.query({ name: 'geolocation' }),
-                    typeof DeviceOrientationEvent.requestPermission === 'function' 
-                        ? DeviceOrientationEvent.requestPermission() 
-                        : Promise.resolve('granted')
-                ]);
-                
-                const [geoPermission] = results;
-                if (geoPermission.state === 'granted') {
-                    return true;
-                }
-                throw new Error('Location permission denied');
-            } catch (error) {
-                console.warn('Permission request error:', error);
-                throw error;
-            }
-        }
-
         // Location handling
-        function getCurrentPosition() {
-            return new Promise((resolve, reject) => {
-                navigator.geolocation.getCurrentPosition(resolve, reject, {
-                    enableHighAccuracy: true,
-                    timeout: 5000,
-                    maximumAge: 0
-                });
+        async function initializeLocation() {
+            return new Promise(async (resolve, reject) => {
+                try {
+                    const permission = await navigator.permissions.query({ name: 'geolocation' });
+                    if (permission.state === 'granted') {
+                        startLocationTracking();
+                        resolve();
+                    } else if (permission.state === 'prompt') {
+                        navigator.geolocation.getCurrentPosition(() => {
+                            startLocationTracking();
+                            resolve();
+                        }, (error) => {
+                            loadingStates.location = false;
+                            updateLoadingText();
+                            reject(new Error('Location permission denied or error: ' + error.message));
+                        });
+                    } else {
+                        loadingStates.location = false;
+                        updateLoadingText();
+                        reject(new Error('Location permission not granted.'));
+                    }
+                } catch (error) {
+                    loadingStates.location = false;
+                    updateLoadingText();
+                    reject(new Error('Error getting location permission: ' + error.message));
+                }
             });
         }
 
         function startLocationTracking() {
-            if (watchId) {
-                navigator.geolocation.clearWatch(watchId);
+            loadingStates.location = true;
+            updateLoadingText();
+            if (navigator.geolocation) {
+                watchId = navigator.geolocation.watchPosition(
+                    (position) => {
+                        const { latitude, longitude, accuracy } = position.coords;
+                        if (accuracy < 20) {
+                            userLocation = [latitude, longitude];
+                            if (map && !map.hasLayer(userMarker)) {
+                                userMarker = L.marker(userLocation, {
+                                    icon: L.divIcon({
+                                        className: 'user-location-marker',
+                                        html: '📍',
+                                        iconSize: [25, 25],
+                                        iconAnchor: [12, 24]
+                                    })
+                                }).addTo(map);
+                            } else if (userMarker) {
+                                userMarker.setLatLng(userLocation);
+                            }
+                            if (isNavigating) {
+                                updateNavigation();
+                            }
+                        }
+                    },
+                    (error) => {
+                        console.error('Geolocation error:', error);
+                        updateStatusIndicator('Geolocation error: ' + error.message);
+                        // Consider retrying or informing the user more clearly
+                    },
+                    {
+                        enableHighAccuracy: true,
+                        maximumAge: 10000,
+                        timeout: 10000
+                    }
+                );
+            } else {
+                console.error('Geolocation is not supported by this browser.');
+                updateStatusIndicator('Geolocation not supported.');
             }
-
-            watchId = navigator.geolocation.watchPosition(
-                updateUserLocation,
-                handleLocationError,
-                {
-                    enableHighAccuracy: true,
-                    maximumAge: 0,
-                    timeout: 5000
-                }
-            );
-        }
-
-        function updateUserLocation(position) {
-            userLocation = [position.coords.latitude, position.coords.longitude];
-            if (userMarker) {
-                userMarker.setLatLng(userLocation);
-            }
-            if (isNavigating) {
-                updateNavigation();
-            }
-        }
-
-        function handleLocationError(error) {
-            console.error('Location error:', error);
-            updateStatusIndicator('Location error: ' + error.message);
         }
 
         // Map initialization
-        function initializeMap() {
-            map = L.map('map').setView(userLocation, 15);
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                attribution: '© OpenStreetMap contributors'
-            }).addTo(map);
-            
-            userMarker = L.marker(userLocation, {
-                icon: L.divIcon({
-                    className: 'user-location-marker',
-                    html: '📍',
-                    iconSize: [25, 25],
-                    iconAnchor: [12, 24]
-                })
-            }).addTo(map);
+        async function initializeMap() {
+            return new Promise((resolve, reject) => {
+                if (userLocation) {
+                    map = L.map('map', {
+                        zoomControl: false,
+                        attributionControl: false
+                    }).setView(userLocation, 15);
+
+                    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                        maxZoom: 19,
+                        minZoom: 3,
+                        updateWhenIdle: false,
+                        updateWhenZooming: false,
+                        preferCanvas: true
+                    }).addTo(map);
+
+                    userMarker = L.marker(userLocation, {
+                        icon: L.divIcon({
+                            className: 'user-location-marker',
+                            html: '📍',
+                            iconSize: [25, 25],
+                            iconAnchor: [12, 24]
+                        })
+                    }); // Don't add to map yet, wait for location
+
+                    document.getElementById('recenterButton').style.display = 'inline-block';
+                    loadingStates.map = true;
+                    updateLoadingText();
+                    resolve();
+                } else {
+                    // Retry map initialization after a short delay if location is not yet available
+                    setTimeout(() => {
+                        initializeMap().then(resolve).catch(reject);
+                    }, 500);
+                }
+            });
         }
 
         // Navigation functions
@@ -327,24 +458,31 @@
                 return;
             }
 
+            const navButton = document.getElementById('navButton');
+            navButton.disabled = true;
+
             try {
                 updateStatusIndicator('Calculating route...');
                 const destCoords = await geocodeLocation(destination);
                 if (!destCoords) {
                     updateStatusIndicator('Destination not found');
+                    navButton.disabled = false;
                     return;
                 }
 
                 if (!userLocation) {
-                    const position = await getCurrentPosition();
-                    userLocation = [position.coords.latitude, position.coords.longitude];
+                    updateStatusIndicator('Waiting for current location...');
+                    return; // Wait for location to be available
                 }
 
                 await createRoute(userLocation, destCoords);
                 isNavigating = true;
+                document.getElementById('recenterButton').style.display = 'inline-block';
             } catch (error) {
                 console.error('Navigation error:', error);
                 updateStatusIndicator('Error creating route. Please try again.');
+            } finally {
+                navButton.disabled = false;
             }
         }
 
@@ -353,19 +491,15 @@
                 const response = await fetch(
                     `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(location)}&limit=1`
                 );
-                
                 if (!response.ok) {
                     throw new Error('Geocoding service error');
                 }
-
                 const data = await response.json();
-                
-                if (!data || data.length === 0) {
-                    updateStatusIndicator('Location not found');
+                if (data && data.length > 0) {
+                    return [parseFloat(data[0].lat), parseFloat(data[0].lon)];
+                } else {
                     return null;
                 }
-
-                return [parseFloat(data[0].lat), parseFloat(data[0].lon)];
             } catch (error) {
                 console.error('Geocoding error:', error);
                 updateStatusIndicator('Error finding location');
@@ -382,7 +516,8 @@
                 try {
                     routingControl = L.Routing.control({
                         router: L.Routing.osrmv1({
-                            serviceUrl: 'https://router.project-osrm.org/route/v1'
+                            serviceUrl: 'https://router.project-osrm.org/route/v1',
+                            profile: 'foot'
                         }),
                         waypoints: [
                             L.latLng(start[0], start[1]),
@@ -394,15 +529,13 @@
                         lineOptions: {
                             styles: [{ color: '#2196F3', weight: 6 }]
                         },
-                        show: false // Don't show routing narrative
+                        show: false
                     }).addTo(map);
 
                     routingControl.on('routesfound', (event) => {
-                        if (event && event.routes && event.routes.length > 0) {
+                        if (event.routes.length > 0) {
                             handleRouteFound(event);
-                            isNavigating = true;
-                            updateStatusIndicator('Navigation started');
-                            resolve(event);
+                            resolve();
                         } else {
                             reject(new Error('No route found'));
                         }
@@ -421,26 +554,17 @@
         }
 
         function handleRouteFound(event) {
-            try {
-                routePoints = event.routes[0].coordinates;
-                currentRouteIndex = 0;
-                
-                if (!routePoints || routePoints.length === 0) {
-                    throw new Error('No valid route points received');
-                }
-
-                const bounds = L.latLngBounds(routePoints);
-                map.fitBounds(bounds, { padding: [50, 50] });
-                
-                updateNavigation();
-                updateStatusIndicator('Route found - Following navigation');
-            } catch (error) {
-                console.error('Error handling route:', error);
-                updateStatusIndicator('Error processing route');
-            }
+            routePoints = event.routes[0].coordinates.map(coord => ({
+                lat: coord.lat,
+                lng: coord.lng
+            }));
+            currentRouteIndex = 0;
+            const bounds = L.latLngBounds(routePoints);
+            map.fitBounds(bounds, { padding: [50, 50] });
+            updateNavigation();
+            updateStatusIndicator('Route found - Starting navigation');
         }
 
-        // Navigation updates
         function updateNavigation() {
             if (!routePoints.length || !userLocation) return;
 
@@ -474,18 +598,14 @@
             const arrow = document.getElementById('navigation-arrow');
             const userHeading = deviceCompassHeading || 0;
             const rotation = bearing - userHeading;
-            
-            // Calculate if user is facing wrong direction
+
             const bearingDiff = Math.abs(((bearing - userHeading + 180) % 360) - 180);
             isWrongDirection = bearingDiff > 90;
-
-            // Update arrow appearance
             arrow.classList.toggle('wrong-direction', isWrongDirection);
-            
-            // Smooth rotation
+
             const diff = ((rotation - previousBearing + 180) % 360) - 180;
             const smoothRotation = previousBearing + diff * 0.1;
-            
+
             arrow.style.transform = `translate(-50%, -50%) rotate(${smoothRotation}deg)`;
             previousBearing = smoothRotation;
         }
@@ -495,27 +615,20 @@
                 userLocation[0], userLocation[1],
                 nextPoint.lat, nextPoint.lng
             );
-
-            const distance = calculateDistance(
-                userLocation,
-                [nextPoint.lat, nextPoint.lng]
-            );
-
+            const distance = calculateDistance(userLocation, [nextPoint.lat, nextPoint.lng]);
             const panel = document.getElementById('direction-panel');
             panel.innerHTML = `
-                <span style="font-size: 1.2em;">🎯</span> 
-                ${Math.round(bearing)}° 
-                <span style="margin: 0 5px;">|</span> 
+                <span style="font-size: 1.2em;">🎯</span>
+                ${Math.round(bearing)}°
+                <span style="margin: 0 5px;">|</span>
                 ${Math.round(distance)}m
             `;
-
-            // Update panel color based on distance
             if (distance < 20) {
-                panel.style.backgroundColor = 'rgba(76, 175, 80, 0.9)'; // Green
+                panel.style.backgroundColor = 'rgba(76, 175, 80, 0.9)';
             } else if (distance < 50) {
-                panel.style.backgroundColor = 'rgba(255, 152, 0, 0.9)'; // Orange
+                panel.style.backgroundColor = 'rgba(255, 152, 0, 0.9)';
             } else {
-                panel.style.backgroundColor = 'rgba(0, 0, 0, 0.8)'; // Default black
+                panel.style.backgroundColor = 'rgba(0, 0, 0, 0.8)';
             }
         }
 
@@ -526,7 +639,7 @@
             );
             const distance = calculateDistance(userLocation, [nextPoint.lat, nextPoint.lng]);
             const relativeBearing = ((bearing - (deviceCompassHeading || 0) + 360) % 360);
-            
+
             let instruction = '';
             let icon = '';
 
@@ -551,6 +664,7 @@
             panel.innerHTML = `${icon} ${instruction}`;
         }
 
+        // Utility functions
         function calculateDistance(point1, point2) {
             const R = 6371e3; // Earth's radius in meters
             const φ1 = point1[0] * Math.PI/180;
@@ -577,47 +691,73 @@
             return (Math.atan2(y, x) * 180/Math.PI + 360) % 360;
         }
 
-        // Device orientation handling
-        function initializeDeviceOrientation() {
-            if (window.DeviceOrientationEvent) {
-                if (typeof DeviceOrientationEvent.requestPermission === 'function') {
-                    // iOS 13+ devices
-                    DeviceOrientationEvent.requestPermission()
-                        .then(permission => {
-                            if (permission === 'granted') {
-                                window.addEventListener('deviceorientation', handleDeviceOrientation, true);
-                            }
-                        })
-                        .catch(console.error);
-                } else {
-                    // Non iOS 13+ devices
-                    window.addEventListener('deviceorientation', handleDeviceOrientation, true);
-                }
-            } else {
-                updateStatusIndicator('Device orientation not supported');
+        function recenterMap() {
+            if (userLocation) {
+                map.setView(userLocation, 18);
             }
         }
 
-        function handleDeviceOrientation(event) {
-            const previousHeading = deviceCompassHeading;
-            // Handle different device orientations
-            if (event.webkitCompassHeading !== undefined) {
-                // iOS devices
-                deviceCompassHeading = event.webkitCompassHeading;
-            } else if (event.alpha !== null) {
-                // Android devices
-                deviceCompassHeading = 360 - event.alpha;
-            }
+        // Device orientation handling
+        async function initializeDeviceOrientation() {
+            return new Promise((resolve, reject) => {
+                if (window.DeviceOrientationEvent) {
+                    const handleOrientation = (event) => {
+                        let heading;
+                        if (event.webkitCompassHeading) {
+                            heading = event.webkitCompassHeading;
+                        } else if (event.alpha !== null) {
+                            heading = 360 - event.alpha;
+                        }
 
-            // Smooth compass transitions
-            if (previousHeading !== null) {
-                const headingDiff = ((deviceCompassHeading - previousHeading + 180) % 360) - 180;
-                deviceCompassHeading = previousHeading + headingDiff * 0.3;
-            }
+                        if (heading !== undefined) {
+                            const previousHeading = deviceCompassHeading;
+                            deviceCompassHeading = heading;
 
-            if (isNavigating) {
-                updateNavigation();
-            }
+                            // Smooth compass transitions
+                            if (previousHeading !== null) {
+                                const headingDiff = ((deviceCompassHeading - previousHeading + 180) % 360) - 180;
+                                deviceCompassHeading = previousHeading + headingDiff * 0.3;
+                            }
+
+                            if (isNavigating) {
+                                updateNavigation();
+                            }
+                        }
+                    };
+
+                    const handlePermission = (permissionState) => {
+                        if (permissionState === 'granted') {
+                            window.addEventListener('deviceorientation', handleOrientation, true);
+                            loadingStates.orientation = true;
+                            updateLoadingText();
+                            resolve();
+                        } else {
+                            loadingStates.orientation = false;
+                            updateLoadingText();
+                            reject(new Error('Device orientation permission not granted.'));
+                        }
+                    };
+
+                    if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+                        DeviceOrientationEvent.requestPermission()
+                            .then(handlePermission)
+                            .catch(error => {
+                                loadingStates.orientation = false;
+                                updateLoadingText();
+                                reject(new Error('Error requesting device orientation permission: ' + error.message));
+                            });
+                    } else {
+                        window.addEventListener('deviceorientation', handleOrientation, true);
+                        loadingStates.orientation = true;
+                        updateLoadingText();
+                        resolve();
+                    }
+                } else {
+                    loadingStates.orientation = false;
+                    updateLoadingText();
+                    reject(new Error('Device orientation not supported on this device.'));
+                }
+            });
         }
 
         function updateStatusIndicator(message) {
@@ -628,14 +768,9 @@
 
         // Handle page visibility changes
         document.addEventListener('visibilitychange', () => {
-            if (document.hidden) {
-                // Pause updates when page is hidden
-                if (watchId) {
-                    navigator.geolocation.clearWatch(watchId);
-                    watchId = null;
-                }
-            } else {
-                // Resume updates when page is visible again
+            if (document.hidden && watchId) {
+                navigator.geolocation.clearWatch(watchId);
+            } else if (!document.hidden && !watchId && loadingStates.location) {
                 startLocationTracking();
             }
         });
@@ -648,18 +783,7 @@
             window.removeEventListener('deviceorientation', handleDeviceOrientation, true);
         });
 
-        // iOS specific touch event handler for permission
-        document.addEventListener('touchstart', () => {
-            if (typeof DeviceOrientationEvent.requestPermission === 'function') {
-                DeviceOrientationEvent.requestPermission()
-                    .then(permission => {
-                        if (permission === 'granted') {
-                            initializeDeviceOrientation();
-                        }
-                    })
-                    .catch(console.error);
-            }
-        }, { once: true });
+        // iOS specific touch event handler for permission (moved inside initializeDeviceOrientation for better flow)
 
         // Error handling
         window.addEventListener('error', function(event) {
