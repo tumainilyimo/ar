@@ -62,7 +62,7 @@
             padding: 8px;
             border: 1px solid #ccc;
             border-radius: 4px;
-            width: 140px;
+            width: 200px;
             font-size: 14px;
         }
 
@@ -94,14 +94,28 @@
             font-size: 16px;
         }
 
-        .ar-navigation-container {
+        .instruction-panel {
+            position: fixed;
+            top: 70px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0,0,0,0.8);
+            color: white;
+            padding: 10px 20px;
+            border-radius: 20px;
+            z-index: 3;
+            font-size: 16px;
+            white-space: nowrap;
+        }
+
+        .ar-overlay {
             position: fixed;
             top: 0;
             left: 0;
             width: 100%;
             height: 60%;
+            z-index: 5;
             pointer-events: none;
-            z-index: 4;
         }
 
         .ar-arrow {
@@ -125,39 +139,17 @@
             left: 50%;
             transform: translateX(-50%);
             animation: float 2s infinite ease-in-out;
+            transition: border-bottom-color 0.3s ease;
         }
 
-        .ar-navigation-point {
-            position: absolute;
-            width: 20px;
-            height: 20px;
-            background-color: rgba(33, 150, 243, 0.8);
-            border-radius: 50%;
-            border: 2px solid white;
-            transform: translate(-50%, -50%);
-            animation: pulse 2s infinite;
-        }
-
-        .distance-marker {
-            position: absolute;
-            background: rgba(255, 255, 255, 0.9);
-            padding: 4px 8px;
-            border-radius: 4px;
-            font-size: 12px;
-            transform: translate(-50%, -150%);
-            white-space: nowrap;
+        .wrong-direction .ar-arrow-head {
+            border-bottom-color: rgba(255, 0, 0, 0.9);
         }
 
         @keyframes float {
             0% { transform: translateX(-50%) translateY(0); }
             50% { transform: translateX(-50%) translateY(-10px); }
             100% { transform: translateX(-50%) translateY(0); }
-        }
-
-        @keyframes pulse {
-            0% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
-            50% { transform: translate(-50%, -50%) scale(1.2); opacity: 0.7; }
-            100% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
         }
 
         .status-indicator {
@@ -171,39 +163,18 @@
             font-size: 12px;
             z-index: 1000;
         }
-
-        .ar-overlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 60%;
-            z-index: 5;
-            pointer-events: none;
-        }
-
-        .navigation-point {
-            position: absolute;
-            width: 30px;
-            height: 30px;
-            background: rgba(33, 150, 243, 0.8);
-            border-radius: 50%;
-            border: 3px solid white;
-            transform: translate(-50%, -50%);
-            animation: pulse 2s infinite;
-        }
     </style>
 </head>
 <body>
     <!-- AR Camera View -->
     <div class="camera-view">
-        <a-scene embedded arjs='sourceType: webcam; debugUIEnabled: false; detectionMode: mono_and_matrix;'>
-            <a-camera gps-camera rotation-reader></a-camera>
+        <a-scene embedded arjs="sourceType: webcam; debugUIEnabled: false; detectionMode: mono_and_matrix;">
+            <a-camera gps-camera="simulateLatitude: 0; simulateLongitude: 0" rotation-reader></a-camera>
             <a-entity id="navigation-points"></a-entity>
         </a-scene>
     </div>
 
-    <!-- AR Overlay for dynamic elements -->
+    <!-- AR Overlay -->
     <div class="ar-overlay">
         <div class="ar-arrow" id="navigation-arrow">
             <div class="ar-arrow-head"></div>
@@ -215,15 +186,15 @@
         <div id="map"></div>
     </div>
 
-    <!-- Controls -->
+    <!-- Controls - Only destination input -->
     <div class="controls">
-        <input type="text" id="start" placeholder="Start location">
-        <input type="text" id="end" placeholder="End location">
-        <button onclick="calculateRoute()">Navigate</button>
+        <input type="text" id="destination" placeholder="Enter your destination">
+        <button onclick="startNavigation()">Navigate</button>
     </div>
 
     <!-- Status and Direction Indicators -->
     <div id="direction-panel" class="direction-indicator"></div>
+    <div id="instruction-panel" class="instruction-panel"></div>
     <div id="status-indicator" class="status-indicator"></div>
 
     <script>
@@ -236,6 +207,8 @@
         let previousBearing = 0;
         let watchId = null;
         let isNavigating = false;
+        let currentInstruction = '';
+        let isWrongDirection = false;
 
         // Initialize application
         document.addEventListener('DOMContentLoaded', async () => {
@@ -271,7 +244,9 @@
             try {
                 const results = await Promise.all([
                     navigator.permissions.query({ name: 'geolocation' }),
-                    DeviceOrientationEvent.requestPermission?.() || Promise.resolve('granted')
+                    typeof DeviceOrientationEvent.requestPermission === 'function' 
+                        ? DeviceOrientationEvent.requestPermission() 
+                        : Promise.resolve('granted')
                 ]);
                 
                 const [geoPermission] = results;
@@ -285,7 +260,7 @@
             }
         }
 
-        // Geolocation handling
+        // Location handling
         function getCurrentPosition() {
             return new Promise((resolve, reject) => {
                 navigator.geolocation.getCurrentPosition(resolve, reject, {
@@ -344,31 +319,28 @@
             }).addTo(map);
         }
 
-        // Route calculation
-        async function calculateRoute() {
-            const startInput = document.getElementById('start').value;
-            const endInput = document.getElementById('end').value;
-
-            if (!startInput || !endInput) {
-                updateStatusIndicator('Please enter both locations');
+        // Navigation functions
+        async function startNavigation() {
+            const destination = document.getElementById('destination').value;
+            if (!destination) {
+                updateStatusIndicator('Please enter a destination');
                 return;
             }
 
             try {
                 updateStatusIndicator('Calculating route...');
-                const startCoords = await geocodeLocation(startInput);
-                const endCoords = await geocodeLocation(endInput);
-
-                if (!startCoords || !endCoords) {
-                    updateStatusIndicator('Location not found');
+                const destCoords = await geocodeLocation(destination);
+                if (!destCoords) {
+                    updateStatusIndicator('Destination not found');
                     return;
                 }
 
-                await createRoute(startCoords, endCoords);
+                await createRoute(userLocation, destCoords);
                 isNavigating = true;
+                updateStatusIndicator('Navigation started');
             } catch (error) {
-                console.error('Route calculation error:', error);
-                updateStatusIndicator('Route calculation failed');
+                console.error('Navigation error:', error);
+                updateStatusIndicator('Navigation failed: ' + error.message);
             }
         }
 
@@ -398,7 +370,10 @@
                     ],
                     routeWhileDragging: false,
                     showAlternatives: false,
-                    createMarker: () => null
+                    createMarker: () => null,
+                    lineOptions: {
+                        styles: [{ color: '#2196F3', weight: 6 }]
+                    }
                 }).addTo(map);
 
                 routingControl.on('routesfound', (event) => {
@@ -406,9 +381,7 @@
                     resolve(event);
                 });
 
-                routingControl.on('routingerror', (error) => {
-                    reject(error);
-                });
+                routingControl.on('routingerror', reject);
             });
         }
 
@@ -417,10 +390,8 @@
             currentRouteIndex = 0;
             map.fitBounds(L.latLngBounds(routePoints), { padding: [50, 50] });
             updateNavigation();
-            updateStatusIndicator('Route found - Starting navigation');
         }
 
-        // Navigation updates
         function updateNavigation() {
             if (!routePoints.length || !userLocation) return;
 
@@ -432,7 +403,7 @@
                     [nextPointCoords.lat, nextPointCoords.lng]
                 );
 
-                if (distanceToNext < 10) { // 10 meters threshold
+                if (distanceToNext < 10) {
                     currentRouteIndex++;
                     updateStatusIndicator('Reached waypoint - Moving to next');
                 }
@@ -443,200 +414,34 @@
 
             updateARElements(nextPoint);
             updateDirectionPanel(nextPoint);
+            updateInstructionPanel(nextPoint);
         }
 
         function updateARElements(nextPoint) {
-            // Update AR arrow
             const bearing = calculateBearing(
                 userLocation[0], userLocation[1],
                 nextPoint.lat, nextPoint.lng
             );
 
             const arrow = document.getElementById('navigation-arrow');
-            const rotation = bearing - (deviceCompassHeading || 0);
+            const userHeading = deviceCompassHeading || 0;
+            const rotation = bearing - userHeading;
             
+            // Calculate if user is facing wrong direction
+            const bearingDiff = Math.abs(((bearing - userHeading + 180) % 360) - 180);
+            isWrongDirection = bearingDiff > 90;
+
+            // Update arrow appearance
+            arrow.classList.toggle('wrong-direction', isWrongDirection);
+
             // Smooth rotation
             const diff = ((rotation - previousBearing + 180) % 360) - 180;
             const smoothRotation = previousBearing + diff * 0.1;
             
-            // Continue from the arrow update
             arrow.style.transform = `translate(-50%, -50%) rotate(${smoothRotation}deg)`;
             previousBearing = smoothRotation;
-
-            // Update AR navigation points
-            const container = document.getElementById('navigation-points');
-            container.innerHTML = '';
-
-            // Calculate and display next visible waypoints
-            const visiblePoints = Math.min(3, routePoints.length - currentRouteIndex);
-            for (let i = 0; i < visiblePoints; i++) {
-                const pointIndex = currentRouteIndex + i;
-                const point = routePoints[pointIndex];
-                
-                // Create AR entity for the point
-                const entity = document.createElement('a-entity');
-                const distance = calculateDistance(userLocation, [point.lat, point.lng]);
-                
-                // Set point attributes
-                entity.setAttribute('nav-point', {
-                    latitude: point.lat,
-                    longitude: point.lng,
-                    distance: distance,
-                    index: i
-                });
-                
-                entity.setAttribute('gps-entity-place', {
-                    latitude: point.lat,
-                    longitude: point.lng
-                });
-
-                // Add progress indicator if it's the active point
-                if (i === 0) {
-                    entity.setAttribute('active-point', '');
-                }
-                
-                container.appendChild(entity);
-            }
         }
 
-        // Custom A-Frame component for navigation points
-        AFRAME.registerComponent('nav-point', {
-            schema: {
-                latitude: { type: 'number', default: 0 },
-                longitude: { type: 'number', default: 0 },
-                distance: { type: 'number', default: 0 },
-                index: { type: 'number', default: 0 }
-            },
-
-            init: function() {
-                this.createPoint();
-                this.createLabel();
-                this.createDistanceIndicator();
-                this.setupAnimations();
-            },
-
-            createPoint: function() {
-                // Create the main point geometry
-                this.el.setAttribute('geometry', {
-                    primitive: 'sphere',
-                    radius: 0.5 - (this.data.index * 0.1) // Smaller points for further waypoints
-                });
-
-                // Set material with different colors based on index
-                const colors = ['#2196F3', '#64B5F6', '#90CAF9'];
-                this.el.setAttribute('material', {
-                    color: colors[this.data.index] || colors[colors.length - 1],
-                    opacity: 0.8 - (this.data.index * 0.1),
-                    transparent: true
-                });
-            },
-
-            createLabel: function() {
-                const label = document.createElement('a-entity');
-                const distance = Math.round(this.data.distance);
-                
-                // Create text label
-                const text = document.createElement('a-text');
-                text.setAttribute('value', `${distance}m`);
-                text.setAttribute('align', 'center');
-                text.setAttribute('position', '0 0.7 0');
-                text.setAttribute('scale', '0.7 0.7 0.7');
-                text.setAttribute('color', 'white');
-                text.setAttribute('look-at', '[camera]');
-
-                // Add background panel for better visibility
-                const background = document.createElement('a-plane');
-                background.setAttribute('position', '0 0.7 -0.01');
-                background.setAttribute('color', '#000');
-                background.setAttribute('opacity', '0.5');
-                background.setAttribute('height', '0.3');
-                background.setAttribute('width', '0.8');
-
-                label.appendChild(background);
-                label.appendChild(text);
-                this.el.appendChild(label);
-            },
-
-            createDistanceIndicator: function() {
-                if (this.data.index === 0) {
-                    const progressRing = document.createElement('a-ring');
-                    progressRing.setAttribute('radius-inner', '0.6');
-                    progressRing.setAttribute('radius-outer', '0.7');
-                    progressRing.setAttribute('color', '#4CAF50');
-                    progressRing.setAttribute('rotation', '90 0 0');
-                    this.el.appendChild(progressRing);
-                }
-            },
-
-            setupAnimations: function() {
-                // Pulse animation
-                this.el.setAttribute('animation__scale', {
-                    property: 'scale',
-                    dir: 'alternate',
-                    dur: 1000 + (this.data.index * 200),
-                    easing: 'easeInOutQuad',
-                    loop: true,
-                    from: '1 1 1',
-                    to: '1.2 1.2 1.2'
-                });
-
-                // Fade animation
-                this.el.setAttribute('animation__opacity', {
-                    property: 'material.opacity',
-                    dir: 'alternate',
-                    dur: 1000 + (this.data.index * 200),
-                    easing: 'easeInOutQuad',
-                    loop: true,
-                    from: 0.8 - (this.data.index * 0.1),
-                    to: 0.4 - (this.data.index * 0.1)
-                });
-            }
-        });
-
-        // Active point component for the current waypoint
-        AFRAME.registerComponent('active-point', {
-            init: function() {
-                this.setupActiveIndicator();
-            },
-
-            setupActiveIndicator: function() {
-                // Add active indicator ring
-                const activeRing = document.createElement('a-ring');
-                activeRing.setAttribute('radius-inner', '0.8');
-                activeRing.setAttribute('radius-outer', '0.9');
-                activeRing.setAttribute('color', '#FFD700');
-                activeRing.setAttribute('rotation', '90 0 0');
-                
-                // Add rotation animation
-                activeRing.setAttribute('animation', {
-                    property: 'rotation',
-                    dur: 3000,
-                    easing: 'linear',
-                    loop: true,
-                    to: '90 360 0'
-                });
-
-                this.el.appendChild(activeRing);
-            }
-        });
-
-        // Device orientation handling with smooth updates
-        function handleDeviceOrientation(event) {
-            const previousHeading = deviceCompassHeading;
-            deviceCompassHeading = event.webkitCompassHeading || Math.abs(event.alpha - 360);
-
-            // Smooth compass transitions
-            if (previousHeading !== null) {
-                const headingDiff = ((deviceCompassHeading - previousHeading + 180) % 360) - 180;
-                deviceCompassHeading = previousHeading + headingDiff * 0.3;
-            }
-
-            if (isNavigating) {
-                updateNavigation();
-            }
-        }
-
-        // Direction panel updates
         function updateDirectionPanel(nextPoint) {
             const bearing = calculateBearing(
                 userLocation[0], userLocation[1],
@@ -656,15 +461,125 @@
                 ${Math.round(distance)}m
             `;
 
-            // Update color based on distance
+            // Update panel color based on distance
             if (distance < 20) {
-                panel.style.backgroundColor = 'rgba(76, 175, 80, 0.9)'; // Green
+                panel.style.backgroundColor = 'rgba(76, 175, 80, 0.9)'; // Green - Very close
             } else if (distance < 50) {
-                panel.style.backgroundColor = 'rgba(255, 152, 0, 0.9)'; // Orange
+                panel.style.backgroundColor = 'rgba(255, 152, 0, 0.9)'; // Orange - Getting closer
             } else {
                 panel.style.backgroundColor = 'rgba(0, 0, 0, 0.8)'; // Default black
             }
         }
+
+        function updateInstructionPanel(nextPoint) {
+            const bearing = calculateBearing(
+                userLocation[0], userLocation[1],
+                nextPoint.lat, nextPoint.lng
+            );
+            const distance = calculateDistance(userLocation, [nextPoint.lat, nextPoint.lng]);
+            const relativeBearing = ((bearing - (deviceCompassHeading || 0) + 360) % 360);
+            
+            let instruction = '';
+            let icon = '';
+
+            if (distance < 20) {
+                instruction = 'Destination ahead';
+                icon = '🏁';
+            } else if (isWrongDirection) {
+                instruction = 'Wrong direction - Turn around';
+                icon = '⚠️';
+            } else if (relativeBearing > 330 || relativeBearing < 30) {
+                instruction = 'Continue straight ahead';
+                icon = '⬆️';
+            } else if (relativeBearing < 180) {
+                instruction = 'Turn right';
+                icon = '↗️';
+            } else {
+                instruction = 'Turn left';
+                icon = '↖️';
+            }
+
+            const panel = document.getElementById('instruction-panel');
+            panel.innerHTML = `${icon} ${instruction}`;
+        }
+
+        function calculateDistance(point1, point2) {
+            const R = 6371e3; // Earth's radius in meters
+            const φ1 = point1[0] * Math.PI/180;
+            const φ2 = point2[0] * Math.PI/180;
+            const Δφ = (point2[0]-point1[0]) * Math.PI/180;
+            const Δλ = (point2[1]-point1[1]) * Math.PI/180;
+
+            const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
+                     Math.cos(φ1) * Math.cos(φ2) *
+                     Math.sin(Δλ/2) * Math.sin(Δλ/2);
+
+            return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+        }
+
+        function calculateBearing(lat1, lon1, lat2, lon2) {
+            const φ1 = lat1 * Math.PI/180;
+            const φ2 = lat2 * Math.PI/180;
+            const Δλ = (lon2-lon1) * Math.PI/180;
+
+            const y = Math.sin(Δλ) * Math.cos(φ2);
+            const x = Math.cos(φ1) * Math.sin(φ2) -
+                     Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ);
+
+            return (Math.atan2(y, x) * 180/Math.PI + 360) % 360;
+        }
+
+        // Device orientation handling
+        function initializeDeviceOrientation() {
+            if (window.DeviceOrientationEvent) {
+                window.addEventListener('deviceorientation', handleDeviceOrientation, true);
+            } else {
+                updateStatusIndicator('Device orientation not supported');
+            }
+        }
+
+        function handleDeviceOrientation(event) {
+            const previousHeading = deviceCompassHeading;
+            
+            // Handle different device orientations
+            if (event.webkitCompassHeading !== undefined) {
+                // iOS devices
+                deviceCompassHeading = event.webkitCompassHeading;
+            } else if (event.alpha !== null) {
+                // Android devices
+                deviceCompassHeading = 360 - event.alpha;
+            }
+
+            // Smooth compass transitions
+            if (previousHeading !== null) {
+                const headingDiff = ((deviceCompassHeading - previousHeading + 180) % 360) - 180;
+                deviceCompassHeading = previousHeading + headingDiff * 0.3;
+            }
+
+            if (isNavigating) {
+                updateNavigation();
+            }
+        }
+
+        function updateStatusIndicator(message) {
+            const indicator = document.getElementById('status-indicator');
+            indicator.textContent = message;
+            console.log('Status:', message);
+        }
+
+        // Handle page visibility changes
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                // Pause updates when page is hidden
+                if (watchId) {
+                    navigator.geolocation.clearWatch(watchId);
+                    watchId = null;
+                }
+            } else {
+                // Resume updates when page is visible again
+                startLocationTracking();
+            }
+        });
 
         // Clean up on page unload
         window.addEventListener('beforeunload', () => {
