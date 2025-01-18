@@ -231,10 +231,16 @@
     let userLocation = null;
     let currentRouteIndex = 0;
     let deviceCompassHeading = null;
+    let previousHeading = null;
     let previousBearing = 0;
     let watchId = null;
     let isNavigating = false;
     let isWrongDirection = false;
+
+    // For advanced debugging/calibration:
+    // Adjust this offset if your device heading is consistently off
+    // E.g. set to 90 if your phone's 0 deg is always facing East, or -90, etc.
+    let headingCalibrationOffset = 0;
 
     // ----------------------------------
     // On Page Load
@@ -337,21 +343,21 @@
     }
 
     // ----------------------------------
-    // Initialize Map (Using a custom tile layer for a nicer style)
+    // Initialize Map
     // ----------------------------------
     function initializeMap() {
-      // Create Leaflet map centered on the user's location
       map = L.map('map').setView(userLocation, 15);
 
-      // Replace the default OSM tile layer with a more stylish one, e.g., Carto's Voyager
-      // (You can swap out the URL for another tile provider if you prefer)
-      L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-        attribution:
-          '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-          + ' &copy; <a href="https://carto.com/attributions">CARTO</a>'
-      }).addTo(map);
+      // A nice Carto or OSM tile:
+      L.tileLayer(
+        'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+        {
+          attribution:
+            '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+            + ' &copy; <a href="https://carto.com/attributions">CARTO</a>'
+        }
+      ).addTo(map);
 
-      // Create a marker for the user's location
       userMarker = L.marker(userLocation, {
         icon: L.divIcon({
           className: 'user-location-marker',
@@ -374,20 +380,17 @@
 
       try {
         updateStatusIndicator('Calculating route...');
-        // Geocode the destination via Nominatim
         const destCoords = await geocodeLocation(destination);
         if (!destCoords) {
           updateStatusIndicator('Destination not found');
           return;
         }
 
-        // Ensure we have the user's location
         if (!userLocation) {
           const position = await getCurrentPosition();
           userLocation = [position.coords.latitude, position.coords.longitude];
         }
 
-        // Create the route
         await createRoute(userLocation, destCoords);
         isNavigating = true;
       } catch (error) {
@@ -399,7 +402,9 @@
     async function geocodeLocation(location) {
       try {
         const response = await fetch(
-          `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(location)}&limit=1`
+          `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(
+            location
+          )}&limit=1`
         );
 
         if (!response.ok) {
@@ -422,7 +427,6 @@
 
     function createRoute(start, end) {
       return new Promise((resolve, reject) => {
-        // Clear any previous routing
         if (routingControl) {
           map.removeControl(routingControl);
         }
@@ -432,17 +436,14 @@
             router: L.Routing.osrmv1({
               serviceUrl: 'https://router.project-osrm.org/route/v1',
             }),
-            waypoints: [
-              L.latLng(start[0], start[1]),
-              L.latLng(end[0], end[1]),
-            ],
+            waypoints: [L.latLng(start[0], start[1]), L.latLng(end[0], end[1])],
             routeWhileDragging: false,
             showAlternatives: false,
             createMarker: () => null,
             lineOptions: {
               styles: [{ color: '#2196F3', weight: 6 }],
             },
-            show: false, // Don’t show the default routing summary panel
+            show: false,
           }).addTo(map);
 
           routingControl.on('routesfound', (event) => {
@@ -527,20 +528,23 @@
 
       const arrow = document.getElementById('navigation-arrow');
       const userHeading = deviceCompassHeading || 0;
-      const rotation = bearing - userHeading;
 
-      // Check if user is facing away from the route (bearing diff > 90 deg)
-      const bearingDiff = Math.abs(((bearing - userHeading + 180) % 360) - 180);
-      isWrongDirection = bearingDiff > 90;
+      // The arrow should rotate to show direction to next waypoint
+      // bearing - userHeading gives how many degrees from user's facing direction
+      const rawRotation = bearing - userHeading;
+      // Normalize to [-180..180] for smoother transitions
+      let neededRotation = ((rawRotation + 180) % 360) - 180;
 
-      // Toggle arrow color if facing wrong direction
+      // Optional smoothing factor
+      neededRotation = previousBearing + 0.2 * (neededRotation - previousBearing);
+
+      arrow.style.transform = `translate(-50%, -50%) rotate(${neededRotation}deg)`;
+      previousBearing = neededRotation;
+
+      // Determine if user is going the wrong way: angle difference > 90
+      const angleDiff = Math.abs(neededRotation);
+      isWrongDirection = angleDiff > 90;
       arrow.classList.toggle('wrong-direction', isWrongDirection);
-
-      // Smooth out rotation
-      const diff = ((rotation - previousBearing + 180) % 360) - 180;
-      const smoothRotation = previousBearing + diff * 0.1;
-      arrow.style.transform = `translate(-50%, -50%) rotate(${smoothRotation}deg)`;
-      previousBearing = smoothRotation;
     }
 
     function updateDirectionPanel(nextPoint) {
@@ -560,7 +564,7 @@
         <span style="font-size: 1.2em;">🎯</span> 
         ${Math.round(bearing)}° 
         <span style="margin: 0 5px;">|</span> 
-        ${Math.round(distance)}m
+        ${Math.round(distance)} m
       `;
 
       // Color code the panel based on distance
@@ -584,27 +588,39 @@
         nextPoint.lat,
         nextPoint.lng,
       ]);
-      const relativeBearing =
-        (bearing - (deviceCompassHeading || 0) + 360) % 360;
+      const userHeading = deviceCompassHeading || 0;
+
+      // Relative bearing: how many degrees from the user's current heading
+      let relativeBearing = (bearing - userHeading + 360) % 360;
 
       let instruction = '';
       let icon = '';
 
+      // Near the end
       if (distance < 20) {
         instruction = 'Destination ahead';
         icon = '🏁';
-      } else if (isWrongDirection) {
-        instruction = 'Wrong direction - Turn around';
+      }
+      else if (isWrongDirection) {
+        instruction = 'Turn around';
         icon = '⚠️';
-      } else if (relativeBearing > 330 || relativeBearing < 30) {
-        instruction = 'Continue straight ahead';
-        icon = '⬆️';
-      } else if (relativeBearing < 180) {
-        instruction = 'Turn right';
-        icon = '↗️';
-      } else {
-        instruction = 'Turn left';
-        icon = '↖️';
+      }
+      else {
+        // A simpler "turn" logic:
+        // 0° means straight ahead
+        // 1°–179° => Turn Right
+        // 181°–359° => Turn Left
+        // (Close to 0 means straight, so let's handle that)
+        if (relativeBearing < 30 || relativeBearing > 330) {
+          instruction = 'Continue straight';
+          icon = '⬆️';
+        } else if (relativeBearing < 180) {
+          instruction = 'Turn right';
+          icon = '↗️';
+        } else {
+          instruction = 'Turn left';
+          icon = '↖️';
+        }
       }
 
       const panel = document.getElementById('instruction-panel');
@@ -631,7 +647,7 @@
 
       const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
       const distance = R * c;
-      return distance; // in meters
+      return distance;
     }
 
     function calculateBearing(lat1, lon1, lat2, lon2) {
@@ -644,7 +660,8 @@
         Math.cos(φ1) * Math.sin(φ2) -
         Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ);
 
-      return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
+      let brng = (Math.atan2(y, x) * 180) / Math.PI;
+      return (brng + 360) % 360;
     }
 
     // ----------------------------------
@@ -679,22 +696,28 @@
     }
 
     function handleDeviceOrientation(event) {
-      const previousHeading = deviceCompassHeading;
+      const oldHeading = deviceCompassHeading;
 
-      // iOS uses event.webkitCompassHeading
-      if (event.webkitCompassHeading !== undefined) {
+      // iOS: event.webkitCompassHeading is typically 0 = North
+      if (event.webkitCompassHeading !== undefined && event.webkitCompassHeading !== null) {
         deviceCompassHeading = event.webkitCompassHeading;
-      } else if (event.alpha !== null) {
-        // Android typically uses alpha (0 = North, so we do 360 - alpha)
+      } 
+      else if (event.alpha !== null) {
+        // Android typically has alpha = 0 when device top faces East, so we do 360 - alpha to align with 0 = North
         deviceCompassHeading = 360 - event.alpha;
       }
 
+      // Apply a calibration offset if needed (e.g., 0 or ±90)
+      deviceCompassHeading = (deviceCompassHeading + headingCalibrationOffset + 360) % 360;
+
       // Smooth transitions
-      if (previousHeading !== null && deviceCompassHeading !== null) {
-        const headingDiff =
-          ((deviceCompassHeading - previousHeading + 180) % 360) - 180;
-        deviceCompassHeading = previousHeading + headingDiff * 0.3;
+      if (oldHeading !== null && deviceCompassHeading !== null) {
+        const diff = ((deviceCompassHeading - oldHeading + 180) % 360) - 180;
+        // Adjust 0.3 for more/less smoothing
+        deviceCompassHeading = oldHeading + diff * 0.3;
       }
+
+      previousHeading = deviceCompassHeading;
 
       if (isNavigating) {
         updateNavigation();
@@ -755,7 +778,7 @@
     // Global error handling
     window.addEventListener('error', function (event) {
       console.error('Global error:', event.error);
-      updateStatusIndicator('Error: ' + event.error.message);
+      updateStatusIndicator('Error: ' + (event.error && event.error.message));
     });
   </script>
 </body>
